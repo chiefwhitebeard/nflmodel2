@@ -1,0 +1,58 @@
+name: Generate NFL Predictions
+
+on:
+  schedule:
+    # Tuesday at 6 AM ET (10 AM UTC) - PRIMARY RUN
+    - cron: '0 10 * * 2'
+  workflow_dispatch:
+    inputs:
+      run_type:
+        description: 'Run type (primary or tracking)'
+        required: true
+        default: 'manual'
+        type: choice
+        options:
+          - primary
+          - tracking
+          - manual
+
+jobs:
+  generate-predictions:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.5.1'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev
+      
+      - name: Install R packages
+        run: |
+          Rscript scripts/00_setup.R
+      
+      - name: Run predictions pipeline
+        env:
+          RUN_TYPE: ${{ github.event.inputs.run_type || 'primary' }}
+        run: |
+          Rscript run_weekly_predictions.R
+      
+      - name: Commit and push predictions
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/predictions/*.csv
+          git add data/injury_report.csv
+          git add models/*.rds
+          git add data/*.rds
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update predictions - $(date +'%Y-%m-%d')" && git push)
