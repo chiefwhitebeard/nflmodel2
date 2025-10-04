@@ -12,6 +12,18 @@ cat("Generating NFL predictions for upcoming games...\n")
 # Load trained models
 models <- readRDS("models/nfl_models.rds")
 
+# Function to calculate cover probability using spread uncertainty
+calculate_cover_probability <- function(predicted_spread) {
+  # NFL spread uncertainty (empirical observation: ~10 point standard deviation)
+  sigma <- 10.0
+  
+  # Cover probability = P(actual spread >= predicted spread)
+  # Using normal distribution centered on our prediction
+  cover_prob <- pnorm(0, mean = predicted_spread, sd = sigma, lower.tail = FALSE) * 100
+  
+  return(round(cover_prob, 1))
+}
+
 # Get current season and week
 current_season <- year(Sys.Date())
 if (month(Sys.Date()) < 3) {
@@ -195,7 +207,10 @@ for (i in 1:nrow(upcoming_games)) {
   # 1. Spread prediction (primary)
   predicted_spread <- predict(models$spread, newdata = pred_features)
   
-  # 2. Calculate win probability from spread (more accurate than overfit GLM)
+  # 2. Calculate cover probability for base spread
+  cover_prob <- calculate_cover_probability(predicted_spread)
+  
+  # 3. Calculate win probability from spread (more accurate than overfit GLM)
   # Using normal distribution with sigma ~13.5 points
   sigma <- 13.5
   win_prob_raw <- pnorm(predicted_spread / sigma)
@@ -206,7 +221,7 @@ for (i in 1:nrow(upcoming_games)) {
   
   predicted_winner <- ifelse(predicted_spread > 0, game$home_team, game$away_team)
   
-  # 3. Total points prediction
+  # 4. Total points prediction
   predicted_total <- predict(models$total, newdata = pred_features)
   
   # Compile prediction
@@ -218,15 +233,20 @@ for (i in 1:nrow(upcoming_games)) {
     home_win_probability = round(win_prob * 100, 1),
     home_win_probability_injury_adjusted = round(win_prob * 100, 1),  # Will be updated by injury script
     predicted_spread = round(predicted_spread, 1),
+    cover_probability = cover_prob,  # Paired with predicted_spread
     predicted_spread_injury_adjusted = round(predicted_spread, 1),  # Will be updated by injury script
+    cover_probability_injury_adjusted = cover_prob,  # Will be updated by injury script
     injury_impact = 0,  # Will be updated by injury script
+    predicted_spread_weather_adjusted = round(predicted_spread, 1),  # Will be updated by weather script
+    cover_probability_weather_adjusted = cover_prob,  # Will be updated by weather script
+    adjusted_spread = round(predicted_spread, 1),  # Final cumulative value
+    adjusted_cover_probability = cover_prob,  # Final cumulative value
     predicted_total = round(predicted_total, 1),
     prediction_date = Sys.Date(),
     temp = NA_real_,  # Will be updated by weather script
     wind_speed = NA_real_,  # Will be updated by weather script
     precipitation = NA_real_,  # Will be updated by weather script
-    weather_impact = 0,  # Will be updated by weather script
-    predicted_spread_weather_adjusted = round(predicted_spread, 1)  # Will be updated by weather script
+    weather_impact = 0  # Will be updated by weather script
   )
   
   predictions_list[[i]] <- prediction
@@ -248,7 +268,7 @@ cat("✓ Saved as data/predictions/latest_predictions.csv\n")
 
 # Display predictions
 cat("\n=== PREDICTIONS ===\n")
-print(all_predictions, n = Inf)
+print(all_predictions %>% select(away_team, home_team, predicted_spread, cover_probability, predicted_total), n = Inf)
 
 cat("\n=== Model Performance (from training) ===\n")
 cat(paste("Winner Accuracy:", round(models$accuracy * 100, 1), "%\n"))

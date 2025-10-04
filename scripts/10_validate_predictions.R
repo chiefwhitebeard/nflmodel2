@@ -1,5 +1,5 @@
-# NFL Predictions Model - Validation Script
-# Validates archived predictions against actual results
+# NFL Predictions Model - Enhanced Validation Script
+# Validates predictions against actual results AND tracks cover rates
 
 suppressPackageStartupMessages({
   library(nflreadr)
@@ -37,7 +37,7 @@ if (month(Sys.Date()) < 3) {
 }
 
 schedule <- load_schedules(seasons = current_season)
-schedule$gameday <- as.Date(schedule$gameday)  # Convert to Date
+schedule$gameday <- as.Date(schedule$gameday)
 
 # Match predictions to actual results
 results <- predictions %>%
@@ -45,7 +45,7 @@ results <- predictions %>%
     schedule %>% select(gameday, home_team, away_team, home_score, away_score, result),
     by = c("game_date" = "gameday", "home_team", "away_team")
   ) %>%
-  filter(!is.na(home_score))  # Only completed games
+  filter(!is.na(home_score))
 
 if (nrow(results) == 0) {
   cat("No completed games found for validation yet.\n")
@@ -64,11 +64,17 @@ results <- results %>%
     # Prediction errors
     winner_correct = (predicted_winner == home_team & actual_home_win) | 
       (predicted_winner == away_team & !actual_home_win),
-    spread_error = abs(predicted_spread_weather_adjusted - actual_spread),
+    spread_error = abs(adjusted_spread - actual_spread),
     total_error = abs(predicted_total - actual_total),
     
-    # Market comparison (if you had market lines, you'd compare here)
-    model_vs_actual_diff = predicted_spread_weather_adjusted - actual_spread
+    # NEW: Cover tracking - did actual outcome beat our prediction?
+    covered = actual_spread >= adjusted_spread,
+    
+    # Spread bucket for grouping (round to nearest 3 points)
+    spread_bucket = round(adjusted_spread / 3) * 3,
+    
+    # Model vs actual difference
+    model_vs_actual_diff = adjusted_spread - actual_spread
   )
 
 # Summary metrics
@@ -77,11 +83,29 @@ spread_mae <- mean(results$spread_error, na.rm = TRUE)
 total_mae <- mean(results$total_error, na.rm = TRUE)
 avg_model_bias <- mean(results$model_vs_actual_diff, na.rm = TRUE)
 
+# NEW: Overall cover rate
+overall_cover_rate <- mean(results$covered, na.rm = TRUE)
+
 cat("\n=== Validation Results ===\n")
 cat(paste("Winner Accuracy:", round(winner_accuracy * 100, 1), "%\n"))
 cat(paste("Spread MAE:", round(spread_mae, 2), "points\n"))
 cat(paste("Total MAE:", round(total_mae, 2), "points\n"))
 cat(paste("Model Bias:", round(avg_model_bias, 2), "points (+ favors home)\n"))
+cat(paste("Overall Cover Rate:", round(overall_cover_rate * 100, 1), "%\n"))
+
+# NEW: Cover rate by spread bucket
+cover_by_spread <- results %>%
+  group_by(spread_bucket) %>%
+  summarise(
+    games = n(),
+    cover_rate = mean(covered) * 100,
+    avg_predicted_cover_prob = mean(adjusted_cover_probability),
+    .groups = "drop"
+  ) %>%
+  arrange(spread_bucket)
+
+cat("\n=== Cover Rates by Spread ===\n")
+print(cover_by_spread, n = Inf)
 
 # Save detailed results
 validation_date <- Sys.Date()
@@ -89,7 +113,7 @@ detail_file <- paste0("data/validation/validation_detail_", validation_date, ".c
 write.csv(results, detail_file, row.names = FALSE)
 cat(paste("\n✓ Detailed results saved to", detail_file, "\n"))
 
-# Append to accuracy log
+# Append to accuracy log (enhanced with cover rate)
 log_entry <- data.frame(
   validation_date = validation_date,
   prediction_date = unique(predictions$prediction_date)[1],
@@ -98,6 +122,7 @@ log_entry <- data.frame(
   spread_mae = spread_mae,
   total_mae = total_mae,
   model_bias = avg_model_bias,
+  overall_cover_rate = overall_cover_rate,  # NEW
   stringsAsFactors = FALSE
 )
 
@@ -112,6 +137,20 @@ if (file.exists(log_file)) {
 write.csv(log_data, log_file, row.names = FALSE)
 cat(paste("✓ Updated accuracy log:", log_file, "\n"))
 
+# NEW: Save cover rate database
+cover_db_file <- "data/validation/cover_rates_by_spread.csv"
+if (file.exists(cover_db_file)) {
+  existing_cover_db <- read.csv(cover_db_file, stringsAsFactors = FALSE)
+  # Append new data
+  combined_cover_db <- bind_rows(existing_cover_db, 
+                                 cover_by_spread %>% mutate(validation_date = validation_date))
+} else {
+  combined_cover_db <- cover_by_spread %>% mutate(validation_date = validation_date)
+}
+
+write.csv(combined_cover_db, cover_db_file, row.names = FALSE)
+cat(paste("✓ Updated cover rate database:", cover_db_file, "\n"))
+
 # Performance alerts
 alerts <- c()
 if (winner_accuracy < 0.60) {
@@ -122,6 +161,9 @@ if (spread_mae > 12) {
 }
 if (abs(avg_model_bias) > 2) {
   alerts <- c(alerts, paste("⚠️  Model bias exceeds 2 points:", round(avg_model_bias, 2)))
+}
+if (abs(overall_cover_rate - 0.50) > 0.10) {
+  alerts <- c(alerts, paste("⚠️  Cover rate deviates from 50%:", round(overall_cover_rate * 100, 1), "%"))
 }
 
 if (length(alerts) > 0) {

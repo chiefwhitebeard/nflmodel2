@@ -1,5 +1,5 @@
-# NFL Predictions Model - Accuracy Dashboard
-# Generates visualizations and statistics from validation log
+# NFL Predictions Model - Enhanced Accuracy Dashboard
+# Generates visualizations and statistics from validation log including cover rates
 
 suppressPackageStartupMessages({
   library(dplyr)
@@ -37,6 +37,10 @@ cat(paste("Average spread MAE:", round(mean(log_data$spread_mae), 2), "points\n"
 cat(paste("Average total MAE:", round(mean(log_data$total_mae), 2), "points\n"))
 cat(paste("Average model bias:", round(mean(log_data$model_bias), 2), "points\n"))
 
+if ("overall_cover_rate" %in% names(log_data)) {
+  cat(paste("Average cover rate:", round(mean(log_data$overall_cover_rate, na.rm = TRUE) * 100, 1), "%\n"))
+}
+
 # Rolling averages (last 4 weeks)
 if (nrow(log_data) >= 4) {
   recent <- tail(log_data, 4)
@@ -44,6 +48,9 @@ if (nrow(log_data) >= 4) {
   cat(paste("Winner accuracy:", round(mean(recent$winner_accuracy) * 100, 1), "%\n"))
   cat(paste("Spread MAE:", round(mean(recent$spread_mae), 2), "points\n"))
   cat(paste("Total MAE:", round(mean(recent$total_mae), 2), "points\n"))
+  if ("overall_cover_rate" %in% names(recent)) {
+    cat(paste("Cover rate:", round(mean(recent$overall_cover_rate, na.rm = TRUE) * 100, 1), "%\n"))
+  }
 }
 
 # Trend analysis
@@ -60,6 +67,12 @@ if (nrow(log_data) >= 3) {
               round(acc_trend * 100, 1), "percentage points\n"))
     cat(paste("Spread MAE trend:", ifelse(spread_trend > 0, "+", ""), 
               round(spread_trend, 2), "points\n"))
+    
+    if ("overall_cover_rate" %in% names(log_data)) {
+      cover_trend <- mean(recent_3$overall_cover_rate, na.rm = TRUE) - mean(older_3$overall_cover_rate, na.rm = TRUE)
+      cat(paste("Cover rate trend:", ifelse(cover_trend > 0, "+", ""), 
+                round(cover_trend * 100, 1), "percentage points\n"))
+    }
   }
 }
 
@@ -112,7 +125,58 @@ p3 <- ggplot(log_data, aes(x = validation_date, y = model_bias)) +
 ggsave("data/validation/plot_model_bias.png", p3, width = 10, height = 6)
 cat("✓ Saved model bias plot\n")
 
-# 4. Combined metrics
+# 4. Cover Rate Over Time
+if ("overall_cover_rate" %in% names(log_data)) {
+  p4 <- ggplot(log_data, aes(x = validation_date, y = overall_cover_rate * 100)) +
+    geom_line(color = "darkgreen", size = 1) +
+    geom_point(color = "darkgreen", size = 3) +
+    geom_hline(yintercept = 50, linetype = "solid", color = "gray", alpha = 0.5) +
+    geom_hline(yintercept = 40, linetype = "dashed", color = "red", alpha = 0.5) +
+    geom_hline(yintercept = 60, linetype = "dashed", color = "red", alpha = 0.5) +
+    labs(title = "Overall Cover Rate Over Time",
+         subtitle = "Gray line = 50% (ideal), Red lines = alert thresholds",
+         x = "Validation Date", y = "Cover Rate (%)") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold"))
+  
+  ggsave("data/validation/plot_cover_rate.png", p4, width = 10, height = 6)
+  cat("✓ Saved cover rate plot\n")
+}
+
+# 5. Cover Rate by Spread Bucket (if enough data)
+if (file.exists("data/validation/cover_rates_by_spread.csv")) {
+  cover_db <- read.csv("data/validation/cover_rates_by_spread.csv", stringsAsFactors = FALSE)
+  
+  # Aggregate across all validations
+  cover_summary <- cover_db %>%
+    group_by(spread_bucket) %>%
+    summarise(
+      total_games = sum(games),
+      avg_cover_rate = weighted.mean(cover_rate, games),
+      avg_predicted_prob = weighted.mean(avg_predicted_cover_prob, games),
+      .groups = "drop"
+    ) %>%
+    filter(total_games >= 3)  # Only show buckets with 3+ games
+  
+  if (nrow(cover_summary) > 0) {
+    p5 <- ggplot(cover_summary, aes(x = spread_bucket, y = avg_cover_rate)) +
+      geom_col(fill = "steelblue", alpha = 0.7) +
+      geom_line(aes(y = avg_predicted_prob), color = "red", size = 1) +
+      geom_point(aes(y = avg_predicted_prob), color = "red", size = 3) +
+      geom_hline(yintercept = 50, linetype = "dashed", color = "gray") +
+      geom_text(aes(label = total_games), vjust = -0.5, size = 3) +
+      labs(title = "Cover Rate by Spread Bucket",
+           subtitle = "Blue bars = actual cover rate, Red line = predicted cover probability. Numbers = total games.",
+           x = "Predicted Spread (points)", y = "Cover Rate (%)") +
+      theme_minimal() +
+      theme(plot.title = element_text(face = "bold"))
+    
+    ggsave("data/validation/plot_cover_by_spread.png", p5, width = 12, height = 6)
+    cat("✓ Saved cover rate by spread plot\n")
+  }
+}
+
+# 6. Combined metrics
 log_long <- log_data %>%
   select(validation_date, winner_accuracy, spread_mae, total_mae) %>%
   tidyr::pivot_longer(cols = c(winner_accuracy, spread_mae, total_mae),
@@ -133,7 +197,7 @@ log_long <- log_long %>%
     )
   )
 
-p4 <- ggplot(log_long, aes(x = validation_date, y = normalized_value, color = metric_label)) +
+p6 <- ggplot(log_long, aes(x = validation_date, y = normalized_value, color = metric_label)) +
   geom_line(size = 1) +
   geom_point(size = 2) +
   labs(title = "All Metrics Over Time",
@@ -142,7 +206,7 @@ p4 <- ggplot(log_long, aes(x = validation_date, y = normalized_value, color = me
   theme(plot.title = element_text(face = "bold"),
         legend.position = "bottom")
 
-ggsave("data/validation/plot_combined_metrics.png", p4, width = 10, height = 6)
+ggsave("data/validation/plot_combined_metrics.png", p6, width = 10, height = 6)
 cat("✓ Saved combined metrics plot\n")
 
 cat("\n✓ Dashboard complete\n")

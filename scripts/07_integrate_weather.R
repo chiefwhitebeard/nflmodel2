@@ -10,6 +10,16 @@ suppressPackageStartupMessages({
 
 cat("Integrating weather data...\n")
 
+# Load historical data for cover probability calculations
+features_data <- readRDS("data/features_data.rds")
+
+# Function to calculate cover probability using spread uncertainty
+calculate_cover_probability <- function(predicted_spread) {
+  sigma <- 10.0  # NFL spread uncertainty
+  cover_prob <- pnorm(0, mean = predicted_spread, sd = sigma, lower.tail = FALSE) * 100
+  return(round(cover_prob, 1))
+}
+
 # Stadium locations (lat/lon) for weather API calls
 stadium_locations <- data.frame(
   team = c("ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE", "DAL", "DEN",
@@ -81,13 +91,16 @@ get_weather_forecast <- function(lat, lon, game_date) {
 # Load current predictions
 predictions <- read.csv("data/predictions/latest_predictions.csv", stringsAsFactors = FALSE)
 
+cat("\n=== DEBUG: Columns after loading CSV ===\n")
+print(names(predictions))
+
 cat(paste("  Fetching weather for", nrow(predictions), "games...\n"))
 
-# Add weather data to predictions
-predictions$temp <- NA
-predictions$wind_speed <- NA
-predictions$precipitation <- NA
-predictions$weather_impact <- 0
+# Initialize weather columns only if they don't exist (preserve existing values)
+if (!("temp" %in% names(predictions))) predictions$temp <- NA
+if (!("wind_speed" %in% names(predictions))) predictions$wind_speed <- NA
+if (!("precipitation" %in% names(predictions))) predictions$precipitation <- NA
+if (!("weather_impact" %in% names(predictions))) predictions$weather_impact <- 0
 
 for (i in 1:nrow(predictions)) {
   game <- predictions[i, ]
@@ -151,8 +164,6 @@ for (i in 1:nrow(predictions)) {
   }
   
   # Apply weather impact (negative = favors home team in bad weather due to familiarity)
-  # But if away team is pass-heavy and home team is run-heavy, adjust accordingly
-  # For now, apply generic impact
   predictions$weather_impact[i] <- impact
 }
 
@@ -160,7 +171,20 @@ for (i in 1:nrow(predictions)) {
 predictions$predicted_spread_weather_adjusted <- 
   predictions$predicted_spread_injury_adjusted + predictions$weather_impact
 
+# NEW: Calculate cover probability for weather-adjusted spread
+predictions$cover_probability_weather_adjusted <- sapply(
+  predictions$predicted_spread_weather_adjusted,
+  calculate_cover_probability
+)
+
+# NEW: Set final adjusted values (cumulative of all adjustments)
+predictions$adjusted_spread <- predictions$predicted_spread_weather_adjusted
+predictions$adjusted_cover_probability <- predictions$cover_probability_weather_adjusted
+
 cat(paste("✓ Weather data integrated for", sum(!is.na(predictions$wind_speed)), "outdoor games\n"))
+
+cat("\n=== DEBUG: Columns before saving CSV ===\n")
+print(names(predictions))
 
 # Save updated predictions
 write.csv(predictions, "data/predictions/latest_predictions.csv", row.names = FALSE)
@@ -188,9 +212,17 @@ if (nrow(weather_games) > 0) {
       " | Temp: ", round(game$temp, 0), "°F",
       " | Wind: ", round(game$wind_speed, 0), " mph",
       " | Precip: ", round(game$precipitation, 2), " in",
-      " | Impact: ", round(game$weather_impact, 1), " pts\n"
+      " | Spread: ", round(game$predicted_spread_injury_adjusted, 1),
+      " → ", round(game$adjusted_spread, 1),
+      " | Cover %: ", game$cover_probability_injury_adjusted,
+      "% → ", game$adjusted_cover_probability, "%\n"
     ))
   }
 }
 
 cat("\n✓ Weather adjustments complete\n")
+cat("\n=== FINAL PREDICTIONS SUMMARY ===\n")
+summary_display <- predictions %>%
+  mutate(game = paste0(away_team, " @ ", home_team)) %>%
+  select(game, final_spread = adjusted_spread, cover_prob = adjusted_cover_probability)
+print(summary_display, row.names = FALSE)
