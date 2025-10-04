@@ -41,7 +41,7 @@ jobs:
         run: |
           Rscript scripts/00_setup.R
           
-        - name: Create required directories
+      - name: Create required directories
         run: |
           mkdir -p data/predictions
           mkdir -p data/validation
