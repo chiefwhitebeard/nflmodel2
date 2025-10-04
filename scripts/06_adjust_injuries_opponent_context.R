@@ -5,23 +5,13 @@ suppressPackageStartupMessages({
   library(httr)
   library(jsonlite)
   library(dplyr)
-  library(nflreadr)  # ADD THIS - was missing!
+  library(nflreadr)
 })
 
 cat("Adjusting predictions for injuries...\n")
 
 # Load base predictions
 base_predictions <- read.csv("data/predictions/latest_predictions.csv", stringsAsFactors = FALSE)
-
-# Load historical data for cover probability calculations
-features_data <- readRDS("data/features_data.rds")
-
-# Function to calculate cover probability using spread uncertainty
-calculate_cover_probability <- function(predicted_spread) {
-  sigma <- 10.0  # NFL spread uncertainty
-  cover_prob <- pnorm(0, mean = predicted_spread, sd = sigma, lower.tail = FALSE) * 100
-  return(round(cover_prob, 1))
-}
 
 # Team name to abbreviation mapping
 team_map <- c(
@@ -326,12 +316,6 @@ if (is.null(injuries)) {
   adjusted_predictions$predicted_spread_injury_adjusted <- 
     adjusted_predictions$predicted_spread + adjusted_predictions$injury_impact
   
-  # NEW: Calculate cover probability for injury-adjusted spread
-  adjusted_predictions$cover_probability_injury_adjusted <- sapply(
-    adjusted_predictions$predicted_spread_injury_adjusted,
-    calculate_cover_probability
-  )
-  
   # Update predicted winner based on injury-adjusted spread
   adjusted_predictions$predicted_winner <- ifelse(
     adjusted_predictions$predicted_spread_injury_adjusted > 0,
@@ -339,9 +323,14 @@ if (is.null(injuries)) {
     adjusted_predictions$away_team
   )
   
+  # Calculate win probability and cover probability from injury-adjusted spread
   sigma <- 13.5
-  adjusted_predictions$home_win_probability_injury_adjusted <- 
-    pnorm(adjusted_predictions$predicted_spread_injury_adjusted / sigma) * 100
+  win_prob_raw <- pnorm(adjusted_predictions$predicted_spread_injury_adjusted / sigma)
+  win_prob <- pmax(0.05, pmin(0.95, win_prob_raw))
+  
+  adjusted_predictions$home_win_probability_injury_adjusted <- win_prob * 100
+  # Cover probability equals win probability
+  adjusted_predictions$cover_probability_injury_adjusted <- win_prob * 100
   
   # Keep all existing columns from base_predictions
   base_predictions <- adjusted_predictions
@@ -401,9 +390,9 @@ if (nrow(significant_injuries) > 0) {
     cat(paste0(
       game$away_team, " @ ", game$home_team, 
       " | Base spread: ", round(game$predicted_spread, 1),
-      " (", game$cover_probability, "% cover)",
+      " (", round(game$cover_probability, 1), "% cover)",
       " → Adjusted: ", round(game$predicted_spread_injury_adjusted, 1),
-      " (", game$cover_probability_injury_adjusted, "% cover)",
+      " (", round(game$cover_probability_injury_adjusted, 1), "% cover)",
       " | Impact: ", ifelse(game$injury_impact > 0, "+", ""), round(game$injury_impact, 1), "\n"
     ))
   }
