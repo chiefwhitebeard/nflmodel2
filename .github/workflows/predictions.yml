@@ -40,6 +40,12 @@ jobs:
       - name: Install R packages
         run: |
           Rscript scripts/00_setup.R
+          
+        - name: Create required directories
+        run: |
+          mkdir -p data/predictions
+          mkdir -p data/validation
+          mkdir -p models
       
       - name: Run predictions pipeline
         env:
