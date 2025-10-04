@@ -11,7 +11,11 @@ packages <- c(
   "tidyr",         # Data tidying
   "lubridate",     # Date handling
   "purrr",         # Functional programming
-  "glmnet"         # For modeling
+  "glmnet",        # For modeling
+  "zoo",           # Rolling averages and time series
+  "httr",          # HTTP requests for injury data
+  "jsonlite",      # JSON parsing
+  "ggplot2"        # Visualization for accuracy dashboard
 )
 
 # Function to install packages if not already installed
