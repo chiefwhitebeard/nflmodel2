@@ -59,5 +59,4 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add data/predictions/*.csv
           git add data/injury_report.csv
-          git add data/validation/*.csv
           git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update predictions - $(date +'%Y-%m-%d')" && git push)
