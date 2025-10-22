@@ -1,7 +1,8 @@
 # NFL Predictions Model - Injury Adjustment with Opponent Context
 # This script adjusts predictions based on injuries with opponent-specific weights
-# FIXED: Added recency check to prevent stale IR QB penalties
-# UPDATED: Better column names and preserved injury details
+# v3 FIXES:
+# - QB recency check now requires 50+ attempts in last 3 weeks (starter-level playing time)
+# - Prevents penalties for backup QBs with garbage time attempts
 
 suppressPackageStartupMessages({
   library(httr)
@@ -200,8 +201,12 @@ calculate_team_injury_impact <- function(team_abbr, opponent_abbr, injuries_df, 
     if (nrow(injured_qb) > 0) {
       injured_qb <- injured_qb[1, ]
       
-      # NEW: Check if injured QB has played in the last 3 weeks
-      # This prevents stale IR penalties for QBs who haven't played recently
+      # v3 FIX: Check if injured QB has STARTER-LEVEL playing time in last 3 weeks
+      # Require 50+ attempts (roughly 1+ full game as starter)
+      # This filters out:
+      # - Long-term IR QBs (Burrow, Watson, etc.)
+      # - Backup QBs with garbage time attempts (Richardson with 5 attempts)
+      # - QBs who came in for one drive
       recent_week_threshold <- max(current_season_pbp$week, na.rm = TRUE) - 3
       
       injured_qb_recent_attempts <- current_season_pbp %>%
@@ -209,14 +214,14 @@ calculate_team_injury_impact <- function(team_abbr, opponent_abbr, injuries_df, 
                week >= recent_week_threshold) %>%
         nrow()
       
-      if (injured_qb_recent_attempts == 0) {
-        # QB hasn't played in 3+ weeks - already replaced, no penalty
-        cat(paste("  ✓ Skipping", injured_qb$full_name, "for", team_abbr, "- no attempts in last 3 weeks (stale IR)\n"))
+      if (injured_qb_recent_attempts < 50) {
+        # QB doesn't have starter-level playing time - skip penalty
+        cat(paste("  ✓ Skipping", injured_qb$full_name, "for", team_abbr, "- only", injured_qb_recent_attempts, "attempts in last 3 weeks (not active starter)\n"))
         # Don't apply penalty, but still note it in the report for transparency
         injury_details <- c(injury_details, paste0(injured_qb$full_name, " (QB - LONG-TERM IR, no penalty)"))
       } else {
-        # QB played recently - this is a REAL injury that affects this week
-        cat(paste("  → Processing active QB injury:", injured_qb$full_name, "for", team_abbr, "\n"))
+        # QB has starter-level playing time - this is a REAL injury that affects this week
+        cat(paste("  → Processing active QB injury:", injured_qb$full_name, "for", team_abbr, "(", injured_qb_recent_attempts, "attempts in last 3 weeks)\n"))
         
         # Find REPLACEMENT - next available QB not injured
         remaining_qbs <- team_qbs[team_qbs$gsis_id != injured_qb$gsis_id, ]
@@ -493,10 +498,10 @@ if (nrow(significant_injuries) > 0) {
   }
 }
 
-cat("\n=== KEY FEATURES ===\n")
-cat("✓ Recency check: QBs must have played in last 3 weeks to trigger penalty\n")
+cat("\n=== v3 KEY FEATURES ===\n")
+cat("✓ QB recency check: Requires 50+ attempts in last 3 weeks (starter-level playing time)\n")
+cat("✓ Filters out: Long-term IR QBs, backup QBs with garbage time attempts\n")
 cat("✓ QB penalty caps: 5 points (good backup) / 7 points (poor backup)\n")
-cat("✓ Detailed logging for QB injury decisions\n")
+cat("✓ Detailed logging shows attempt counts for transparency\n")
 cat("✓ All injury detail columns preserved\n")
-cat("✓ Better column naming (spread_after_injuries, home_win_probability_after_injuries)\n")
 cat("\n✓ Injury adjustment complete\n")
