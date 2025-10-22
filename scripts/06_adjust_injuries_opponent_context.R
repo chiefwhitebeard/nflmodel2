@@ -1,6 +1,7 @@
 # NFL Predictions Model - Injury Adjustment with Opponent Context
 # This script adjusts predictions based on injuries with opponent-specific weights
 # FIXED: Added recency check to prevent stale IR QB penalties
+# UPDATED: Better column names and preserved injury details
 
 suppressPackageStartupMessages({
   library(httr)
@@ -347,10 +348,13 @@ tryCatch({
 if (is.null(injuries)) {
   cat("  No injury data available - using base predictions only\n")
   
-  base_predictions$predicted_spread_injury_adjusted <- base_predictions$predicted_spread
-  base_predictions$home_win_probability_injury_adjusted <- base_predictions$home_win_probability
+  base_predictions$spread_after_injuries <- base_predictions$predicted_spread
+  base_predictions$home_win_probability_after_injuries <- base_predictions$home_win_probability
   base_predictions$injury_impact <- 0
-  base_predictions$key_injuries <- ""
+  base_predictions$home_injury_impact <- 0
+  base_predictions$away_injury_impact <- 0
+  base_predictions$home_injuries <- ""
+  base_predictions$away_injuries <- ""
   
 } else {
   cat(paste("  Found injury data for", length(unique(injuries$team)), "teams\n"))
@@ -377,56 +381,42 @@ if (is.null(injuries)) {
   }
   
   adjusted_predictions$injury_impact <- adjusted_predictions$away_injury_impact - adjusted_predictions$home_injury_impact
-  adjusted_predictions$predicted_spread_injury_adjusted <- 
+  adjusted_predictions$spread_after_injuries <- 
     adjusted_predictions$predicted_spread + adjusted_predictions$injury_impact
   
   # Update predicted winner based on injury-adjusted spread
   adjusted_predictions$predicted_winner <- ifelse(
-    adjusted_predictions$predicted_spread_injury_adjusted > 0,
+    adjusted_predictions$spread_after_injuries > 0,
     adjusted_predictions$home_team,
     adjusted_predictions$away_team
   )
   
+  # Calculate win probability after injuries (will be updated again after weather)
   sigma <- 13.5
-  adjusted_predictions$home_win_probability_injury_adjusted <- 
-    pnorm(adjusted_predictions$predicted_spread_injury_adjusted / sigma) * 100
+  adjusted_predictions$home_win_probability_after_injuries <- 
+    pnorm(adjusted_predictions$spread_after_injuries / sigma) * 100
   
-  adjusted_predictions$key_injuries <- ifelse(
-    adjusted_predictions$home_injuries != "" | adjusted_predictions$away_injuries != "",
-    paste0(
-      ifelse(adjusted_predictions$home_injuries != "", 
-             paste0(adjusted_predictions$home_team, ": ", adjusted_predictions$home_injuries), ""),
-      ifelse(adjusted_predictions$home_injuries != "" & adjusted_predictions$away_injuries != "", " | ", ""),
-      ifelse(adjusted_predictions$away_injuries != "", 
-             paste0(adjusted_predictions$away_team, ": ", adjusted_predictions$away_injuries), "")
-    ),
-    ""
-  )
-  
-  # Remove duplicate injuries
+  # Remove duplicate injuries in text descriptions
   for (i in 1:nrow(adjusted_predictions)) {
-    if (adjusted_predictions$key_injuries[i] != "") {
-      injuries_list <- strsplit(adjusted_predictions$key_injuries[i], "; ")[[1]]
+    if (adjusted_predictions$home_injuries[i] != "") {
+      injuries_list <- strsplit(adjusted_predictions$home_injuries[i], "; ")[[1]]
       unique_injuries <- unique(injuries_list)
-      adjusted_predictions$key_injuries[i] <- paste(unique_injuries, collapse = "; ")
+      adjusted_predictions$home_injuries[i] <- paste(unique_injuries, collapse = "; ")
+    }
+    if (adjusted_predictions$away_injuries[i] != "") {
+      injuries_list <- strsplit(adjusted_predictions$away_injuries[i], "; ")[[1]]
+      unique_injuries <- unique(injuries_list)
+      adjusted_predictions$away_injuries[i] <- paste(unique_injuries, collapse = "; ")
     }
   }
   
-  base_predictions <- adjusted_predictions %>%
-    select(game_date, away_team, home_team, predicted_winner, 
-           home_win_probability, home_win_probability_injury_adjusted,
-           predicted_spread, predicted_spread_injury_adjusted, injury_impact,
-           predicted_total, prediction_date)
+  base_predictions <- adjusted_predictions
   
   cat(paste("\n✓ Applied injury adjustments to", nrow(base_predictions), "games\n"))
 }
 
 # Export detailed injury report for manual verification (includes ALL injuries including IR)
 if (!is.null(injuries)) {
-  # Use the injuries dataframe that already has IR QBs added from nflreadr
-  # Note: 'injuries' at this point has been filtered to remove non-QB IR players
-  # So we need to get the original injuries before filtering, then add IR QBs
-  
   all_injuries_for_export <- get_injury_data()
   
   # Add IR QBs from nflreadr to the export
@@ -467,10 +457,29 @@ if (!is.null(injuries)) {
   }
 }
 
-write.csv(base_predictions, "data/predictions/latest_predictions.csv", row.names = FALSE)
+# Select and order columns for better readability
+# Note: We keep intermediate columns here; weather script will do final selection
+final_predictions <- base_predictions %>%
+  select(
+    # Keep everything for now - weather script will finalize
+    game_date, away_team, home_team, predicted_winner,
+    home_win_probability, 
+    home_win_probability_after_injuries,
+    predicted_spread,
+    spread_after_injuries,
+    injury_impact,
+    home_injury_impact,
+    away_injury_impact,
+    predicted_total,
+    prediction_date,
+    home_injuries,
+    away_injuries
+  )
+
+write.csv(final_predictions, "data/predictions/latest_predictions.csv", row.names = FALSE)
 cat("✓ Updated predictions with injury adjustments\n")
 
-significant_injuries <- base_predictions[abs(base_predictions$injury_impact) >= 3, ]
+significant_injuries <- final_predictions[abs(final_predictions$injury_impact) >= 3, ]
 if (nrow(significant_injuries) > 0) {
   cat("\n=== Games with Significant Injury Impact (3+ points) ===\n")
   for (i in 1:nrow(significant_injuries)) {
@@ -478,15 +487,16 @@ if (nrow(significant_injuries) > 0) {
     cat(paste0(
       game$away_team, " @ ", game$home_team, 
       " | Base spread: ", round(game$predicted_spread, 1),
-      " → Adjusted: ", round(game$predicted_spread_injury_adjusted, 1),
+      " → After injuries: ", round(game$spread_after_injuries, 1),
       " (", ifelse(game$injury_impact > 0, "+", ""), round(game$injury_impact, 1), ")\n"
     ))
   }
 }
 
-cat("\n=== KEY CHANGES IN THIS VERSION ===\n")
-cat("✓ Added recency check: QBs must have played in last 3 weeks to trigger penalty\n")
-cat("✓ Reduced QB penalty caps: 5 points (good backup) / 7 points (poor backup)\n")
-cat("✓ Added detailed logging for QB injury decisions\n")
-cat("✓ Prevents stale IR penalties (e.g., Burrow, Richardson)\n")
+cat("\n=== KEY FEATURES ===\n")
+cat("✓ Recency check: QBs must have played in last 3 weeks to trigger penalty\n")
+cat("✓ QB penalty caps: 5 points (good backup) / 7 points (poor backup)\n")
+cat("✓ Detailed logging for QB injury decisions\n")
+cat("✓ All injury detail columns preserved\n")
+cat("✓ Better column naming (spread_after_injuries, home_win_probability_after_injuries)\n")
 cat("\n✓ Injury adjustment complete\n")
