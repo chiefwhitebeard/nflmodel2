@@ -1,6 +1,8 @@
 # NFL Predictions Model - Weather Integration
 # This script fetches weather forecasts and adjusts predictions accordingly
-# UPDATED: Fixed win probability calculation bug and better column names
+# v3 FIXES:
+# - Precipitation now correctly converted from mm to inches
+# - Win probability calculated from final spread (includes weather)
 
 suppressPackageStartupMessages({
   library(httr)
@@ -36,6 +38,7 @@ stadium_locations <- data.frame(
 get_weather_forecast <- function(lat, lon, game_date) {
   
   # Open-Meteo API endpoint
+  # Note: API returns precipitation in millimeters by default
   url <- paste0(
     "https://api.open-meteo.com/v1/forecast?",
     "latitude=", lat,
@@ -65,10 +68,15 @@ get_weather_forecast <- function(lat, lon, game_date) {
       return(NULL)
     }
     
+    # v3 FIX: Convert precipitation from mm to inches
+    # API returns mm by default, we need inches for US audience
+    precip_mm <- data$daily$precipitation_sum[date_idx]
+    precip_inches <- precip_mm / 25.4  # 1 inch = 25.4 mm
+    
     weather <- list(
       temp_max = data$daily$temperature_2m_max[date_idx],
       temp_min = data$daily$temperature_2m_min[date_idx],
-      precipitation = data$daily$precipitation_sum[date_idx],
+      precipitation = precip_inches,  # Now in inches
       wind_speed = data$daily$wind_speed_10m_max[date_idx]
     )
     
@@ -112,7 +120,7 @@ for (i in 1:nrow(predictions)) {
     next
   }
   
-  # Store weather data
+  # Store weather data (precipitation now in inches)
   predictions$temp[i] <- weather$temp_max
   predictions$wind_speed[i] <- weather$wind_speed
   predictions$precipitation[i] <- weather$precipitation
@@ -142,12 +150,12 @@ for (i in 1:nrow(predictions)) {
     }
   }
   
-  # Precipitation impact
+  # Precipitation impact (now correctly in inches)
   if (!is.na(weather$precipitation)) {
     if (weather$precipitation > 0.5) {
-      impact <- impact - 2.0  # Significant rain
+      impact <- impact - 2.0  # Significant rain (>0.5 inches)
     } else if (weather$precipitation > 0.1) {
-      impact <- impact - 0.5  # Light rain
+      impact <- impact - 0.5  # Light rain (0.1-0.5 inches)
     }
   }
   
@@ -160,7 +168,7 @@ for (i in 1:nrow(predictions)) {
 # Apply weather to spread
 predictions$final_spread <- predictions$spread_after_injuries + predictions$weather_impact
 
-# CRITICAL FIX: Recalculate win probability from FINAL spread (after both injuries AND weather)
+# CRITICAL: Recalculate win probability from FINAL spread (after both injuries AND weather)
 sigma <- 13.5
 predictions$final_home_win_probability <- pnorm(predictions$final_spread / sigma) * 100
 
@@ -202,7 +210,7 @@ final_predictions <- predictions %>%
     home_win_probability_after_injuries,
     temp,
     wind_speed,
-    precipitation,
+    precipitation,  # Now correctly in inches
     prediction_date
   )
 
@@ -231,20 +239,21 @@ if (nrow(weather_games) > 0) {
       game$away_team, " @ ", game$home_team,
       " | Temp: ", round(game$temp, 0), "°F",
       " | Wind: ", round(game$wind_speed, 0), " mph",
-      " | Precip: ", round(game$precipitation, 2), " in",
+      " | Precip: ", round(game$precipitation, 2), " in",  # Now shows inches correctly
       " | Impact: ", round(game$weather_impact, 1), " pts\n"
     ))
   }
 }
 
-cat("\n=== COLUMN STRUCTURE ===\n")
+cat("\n=== v3 COLUMN STRUCTURE ===\n")
 cat("TIER 1 - Core: game_date, away_team, home_team, predicted_winner\n")
 cat("TIER 2 - Final: final_spread, final_home_win_probability, predicted_total\n")
 cat("TIER 3 - Breakdown: base_spread, spread_after_injuries, injury_impact, etc.\n")
-cat("TIER 4 - Details: home_injuries, away_injuries, weather, etc.\n")
-cat("\n=== KEY FEATURES ===\n")
-cat("✓ CRITICAL BUG FIX: final_home_win_probability now calculated from final_spread\n")
-cat("✓ Clear naming: final_spread, final_home_win_probability (not 'adjusted')\n")
+cat("TIER 4 - Details: home_injuries, away_injuries, weather (in inches), etc.\n")
+cat("\n=== v3 KEY FEATURES ===\n")
+cat("✓ CRITICAL FIX: Precipitation now correctly converted from mm to inches\n")
+cat("✓ Win probability calculated from final_spread (includes weather)\n")
+cat("✓ Clear naming: final_spread, final_home_win_probability\n")
 cat("✓ Better column order: final values first, then breakdown\n")
 cat("✓ All injury details preserved for analysis\n")
 cat("\n✓ Weather adjustments complete\n")
