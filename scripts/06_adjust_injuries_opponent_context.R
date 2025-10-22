@@ -1,11 +1,11 @@
 # NFL Predictions Model - Injury Adjustment with Opponent Context
 # This script adjusts predictions based on injuries with opponent-specific weights
+# FIXED: Added recency check to prevent stale IR QB penalties
 
 suppressPackageStartupMessages({
   library(httr)
   library(jsonlite)
   library(dplyr)
-  library(nflreadr)
 })
 
 cat("Adjusting predictions for injuries...\n")
@@ -94,7 +94,8 @@ get_injury_data <- function() {
 cat("  Fetching injury reports from ESPN...\n")
 injuries <- get_injury_data()
 
-# Supplement ESPN with nflreadr roster data for IR QBs
+# Supplement ESPN with nflreadr roster data for IR QBs (ESPN often omits long-term IR)
+# Use explicit season for 2025 NFL season
 rosters <- load_rosters(seasons = 2025)
 
 ir_qbs_nflreadr <- rosters %>%
@@ -125,9 +126,11 @@ if (!is.null(injuries)) {
   injuries <- injuries %>%
     distinct(team, player, position, .keep_all = TRUE)
   
+  # Keep IR QBs for injury penalty calculation
   ir_qbs <- injuries %>%
     filter(position == "QB", grepl("INJURED RESERVE|IR", toupper(status)))
   
+  # Remove non-QB IR players (already baked into stats)
   injuries_for_calc <- injuries %>%
     filter(!grepl("INJURED RESERVE|NFI-R|PUP-R", toupper(status)) | 
              (position == "QB" & grepl("INJURED RESERVE|IR", toupper(status))))
@@ -165,7 +168,7 @@ position_weights <- data.frame(
 )
 
 # Calculate injury impact for a team with QB-specific handling
-calculate_team_injury_impact <- function(team_abbr, opponent_abbr, injuries_df, position_weights, defense_ratings = NULL, qb_performance_data = NULL) {
+calculate_team_injury_impact <- function(team_abbr, opponent_abbr, injuries_df, position_weights, defense_ratings = NULL, qb_performance_data = NULL, current_season_pbp = NULL) {
   
   if (is.null(injuries_df)) {
     return(list(impact = 0, details = ""))
@@ -179,13 +182,14 @@ calculate_team_injury_impact <- function(team_abbr, opponent_abbr, injuries_df, 
   total_impact <- 0
   injury_details <- c()
   
-  # Handle QB injuries separately
+  # Handle QB injuries separately - includes IR QBs
   qb_injuries <- team_injuries[team_injuries$position == "QB" & 
                                  grepl("OUT|DOUBTFUL|INJURED RESERVE|IR", toupper(team_injuries$status)), ]
   
-  if (nrow(qb_injuries) > 0 && !is.null(qb_performance_data)) {
+  if (nrow(qb_injuries) > 0 && !is.null(qb_performance_data) && !is.null(current_season_pbp)) {
     team_qbs <- qb_performance_data[qb_performance_data$team == team_abbr, ]
     
+    # Find the INJURED QB in roster data by name matching
     injured_qb_name <- qb_injuries$player[1]
     
     injured_qb <- team_qbs[sapply(team_qbs$full_name, function(name) {
@@ -195,38 +199,80 @@ calculate_team_injury_impact <- function(team_abbr, opponent_abbr, injuries_df, 
     if (nrow(injured_qb) > 0) {
       injured_qb <- injured_qb[1, ]
       
-      if (!is.null(injured_qb$current_season_attempts) && injured_qb$current_season_attempts > 0) {
+      # NEW: Check if injured QB has played in the last 3 weeks
+      # This prevents stale IR penalties for QBs who haven't played recently
+      recent_week_threshold <- max(current_season_pbp$week, na.rm = TRUE) - 3
+      
+      injured_qb_recent_attempts <- current_season_pbp %>%
+        filter(passer_player_id == injured_qb$gsis_id,
+               week >= recent_week_threshold) %>%
+        nrow()
+      
+      if (injured_qb_recent_attempts == 0) {
+        # QB hasn't played in 3+ weeks - already replaced, no penalty
+        cat(paste("  ✓ Skipping", injured_qb$full_name, "for", team_abbr, "- no attempts in last 3 weeks (stale IR)\n"))
+        # Don't apply penalty, but still note it in the report for transparency
+        injury_details <- c(injury_details, paste0(injured_qb$full_name, " (QB - LONG-TERM IR, no penalty)"))
+      } else {
+        # QB played recently - this is a REAL injury that affects this week
+        cat(paste("  → Processing active QB injury:", injured_qb$full_name, "for", team_abbr, "\n"))
+        
+        # Find REPLACEMENT - next available QB not injured
         remaining_qbs <- team_qbs[team_qbs$gsis_id != injured_qb$gsis_id, ]
+        
+        # Sort by depth chart position (from nflreadr), then by pass attempts as tiebreaker
         remaining_qbs <- remaining_qbs[order(remaining_qbs$depth_chart_position, -remaining_qbs$pass_attempts, na.last = TRUE), ]
         
         if (nrow(remaining_qbs) > 0) {
           replacement_qb <- remaining_qbs[1, ]
           
+          # Compare INJURED vs REPLACEMENT
           league_avg <- 0.05
           injured_epa <- ifelse(injured_qb$has_history, injured_qb$epa_per_play, league_avg)
           replacement_epa <- ifelse(replacement_qb$has_history, replacement_qb$epa_per_play, league_avg - 0.05)
           
           epa_diff <- injured_qb$epa_per_play - replacement_qb$epa_per_play
           qb_impact <- epa_diff * 65
-          qb_impact <- min(max(qb_impact, 2), 10)
+          
+          # Cap based on backup quality
+          if (!is.na(replacement_epa) && replacement_epa > 0.0) {
+            # Competent backup (positive EPA) - cap at 5 points
+            qb_impact <- min(max(qb_impact, 1), 5)
+            cat(paste("    Competent backup detected, capped at 5 points\n"))
+          } else {
+            # Poor backup - cap at 7 points (reduced from 10)
+            qb_impact <- min(max(qb_impact, 2), 7)
+            cat(paste("    Poor backup detected, capped at 7 points\n"))
+          }
+          
+          # QB injuries are critical regardless of opponent defense - no multiplier
           
           total_impact <- total_impact + qb_impact
           
+          # Indicate if this is an IR situation
           ir_status <- ifelse(grepl("INJURED RESERVE|IR", toupper(qb_injuries$status[1])), "IR", "OUT")
           injury_details <- c(injury_details, paste0(injured_qb$full_name, " (QB - ", ir_status, ", ", 
                                                      replacement_qb$full_name, " starting)"))
+          
+          cat(paste("    Applied", round(qb_impact, 2), "point penalty\n"))
+        } else {
+          # Fallback if no replacement found (shouldn't happen)
+          qb_impact <- 5.0  # Conservative penalty
+          total_impact <- total_impact + qb_impact
+          injury_details <- c(injury_details, paste0(injured_qb_name, " (QB - OUT)"))
+          cat(paste("    No replacement found, applied default 5 point penalty\n"))
         }
-      } else {
-        cat(paste("  Note:", injured_qb$full_name, "on IR for", team_abbr, "but has not played this season - no penalty applied\n"))
       }
     } else {
-      qb_impact <- 6.5
+      # Fallback if name matching fails
+      cat(paste("  ⚠️  Could not match QB name:", injured_qb_name, "for", team_abbr, "\n"))
+      qb_impact <- 4.0  # Conservative penalty
       total_impact <- total_impact + qb_impact
       injury_details <- c(injury_details, paste0(injured_qb_name, " (QB - OUT)"))
     }
   }
   
-  # Handle non-QB injuries
+  # Handle non-QB injuries (excludes ALL QBs and IR players)
   non_qb_injuries <- team_injuries[team_injuries$position != "QB" & 
                                      !grepl("INJURED RESERVE|IR", toupper(team_injuries$status)), ]
   
@@ -281,14 +327,30 @@ calculate_team_injury_impact <- function(team_abbr, opponent_abbr, injuries_df, 
   ))
 }
 
+# Load current season play-by-play for QB recency check
+cat("  Loading current season play-by-play for QB recency check...\n")
+current_season <- year(Sys.Date())
+if (month(Sys.Date()) < 3) {
+  current_season <- current_season - 1
+}
+
+current_season_pbp <- NULL
+tryCatch({
+  current_season_pbp <- load_pbp(seasons = current_season)
+  cat(paste("  ✓ Loaded", current_season, "play-by-play data\n"))
+}, error = function(e) {
+  cat(paste("  ⚠️  Could not load current season PBP:", e$message, "\n"))
+  cat("  QB recency check will be skipped\n")
+})
+
 # Apply injury adjustments
 if (is.null(injuries)) {
   cat("  No injury data available - using base predictions only\n")
   
   base_predictions$predicted_spread_injury_adjusted <- base_predictions$predicted_spread
-  base_predictions$cover_probability_injury_adjusted <- base_predictions$cover_probability
   base_predictions$home_win_probability_injury_adjusted <- base_predictions$home_win_probability
   base_predictions$injury_impact <- 0
+  base_predictions$key_injuries <- ""
   
 } else {
   cat(paste("  Found injury data for", length(unique(injuries$team)), "teams\n"))
@@ -303,8 +365,10 @@ if (is.null(injuries)) {
     home_team <- adjusted_predictions$home_team[i]
     away_team <- adjusted_predictions$away_team[i]
     
-    home_impact_data <- calculate_team_injury_impact(home_team, away_team, injuries, position_weights, defense_ratings, qb_performance_data)
-    away_impact_data <- calculate_team_injury_impact(away_team, home_team, injuries, position_weights, defense_ratings, qb_performance_data)
+    cat(paste("\n  Analyzing injuries for", away_team, "@", home_team, "\n"))
+    
+    home_impact_data <- calculate_team_injury_impact(home_team, away_team, injuries, position_weights, defense_ratings, qb_performance_data, current_season_pbp)
+    away_impact_data <- calculate_team_injury_impact(away_team, home_team, injuries, position_weights, defense_ratings, qb_performance_data, current_season_pbp)
     
     adjusted_predictions$home_injury_impact[i] <- home_impact_data$impact
     adjusted_predictions$away_injury_impact[i] <- away_impact_data$impact
@@ -323,25 +387,49 @@ if (is.null(injuries)) {
     adjusted_predictions$away_team
   )
   
-  # Calculate win probability and cover probability from injury-adjusted spread
   sigma <- 13.5
-  win_prob_raw <- pnorm(adjusted_predictions$predicted_spread_injury_adjusted / sigma)
-  win_prob <- pmax(0.05, pmin(0.95, win_prob_raw))
+  adjusted_predictions$home_win_probability_injury_adjusted <- 
+    pnorm(adjusted_predictions$predicted_spread_injury_adjusted / sigma) * 100
   
-  adjusted_predictions$home_win_probability_injury_adjusted <- win_prob * 100
-  # Cover probability equals win probability
-  adjusted_predictions$cover_probability_injury_adjusted <- win_prob * 100
+  adjusted_predictions$key_injuries <- ifelse(
+    adjusted_predictions$home_injuries != "" | adjusted_predictions$away_injuries != "",
+    paste0(
+      ifelse(adjusted_predictions$home_injuries != "", 
+             paste0(adjusted_predictions$home_team, ": ", adjusted_predictions$home_injuries), ""),
+      ifelse(adjusted_predictions$home_injuries != "" & adjusted_predictions$away_injuries != "", " | ", ""),
+      ifelse(adjusted_predictions$away_injuries != "", 
+             paste0(adjusted_predictions$away_team, ": ", adjusted_predictions$away_injuries), "")
+    ),
+    ""
+  )
   
-  # Keep all existing columns from base_predictions
-  base_predictions <- adjusted_predictions
+  # Remove duplicate injuries
+  for (i in 1:nrow(adjusted_predictions)) {
+    if (adjusted_predictions$key_injuries[i] != "") {
+      injuries_list <- strsplit(adjusted_predictions$key_injuries[i], "; ")[[1]]
+      unique_injuries <- unique(injuries_list)
+      adjusted_predictions$key_injuries[i] <- paste(unique_injuries, collapse = "; ")
+    }
+  }
   
-  cat(paste("  Applied injury adjustments to", nrow(base_predictions), "games\n"))
+  base_predictions <- adjusted_predictions %>%
+    select(game_date, away_team, home_team, predicted_winner, 
+           home_win_probability, home_win_probability_injury_adjusted,
+           predicted_spread, predicted_spread_injury_adjusted, injury_impact,
+           predicted_total, prediction_date)
+  
+  cat(paste("\n✓ Applied injury adjustments to", nrow(base_predictions), "games\n"))
 }
 
-# Export detailed injury report for manual verification
+# Export detailed injury report for manual verification (includes ALL injuries including IR)
 if (!is.null(injuries)) {
+  # Use the injuries dataframe that already has IR QBs added from nflreadr
+  # Note: 'injuries' at this point has been filtered to remove non-QB IR players
+  # So we need to get the original injuries before filtering, then add IR QBs
+  
   all_injuries_for_export <- get_injury_data()
   
+  # Add IR QBs from nflreadr to the export
   rosters_for_export <- load_rosters(seasons = 2025)
   ir_qbs_for_export <- rosters_for_export %>%
     filter(position == "QB", status %in% c("RES", "IR", "PUP")) %>%
@@ -390,10 +478,15 @@ if (nrow(significant_injuries) > 0) {
     cat(paste0(
       game$away_team, " @ ", game$home_team, 
       " | Base spread: ", round(game$predicted_spread, 1),
-      " (", round(game$cover_probability, 1), "% cover)",
       " → Adjusted: ", round(game$predicted_spread_injury_adjusted, 1),
-      " (", round(game$cover_probability_injury_adjusted, 1), "% cover)",
-      " | Impact: ", ifelse(game$injury_impact > 0, "+", ""), round(game$injury_impact, 1), "\n"
+      " (", ifelse(game$injury_impact > 0, "+", ""), round(game$injury_impact, 1), ")\n"
     ))
   }
 }
+
+cat("\n=== KEY CHANGES IN THIS VERSION ===\n")
+cat("✓ Added recency check: QBs must have played in last 3 weeks to trigger penalty\n")
+cat("✓ Reduced QB penalty caps: 5 points (good backup) / 7 points (poor backup)\n")
+cat("✓ Added detailed logging for QB injury decisions\n")
+cat("✓ Prevents stale IR penalties (e.g., Burrow, Richardson)\n")
+cat("\n✓ Injury adjustment complete\n")
