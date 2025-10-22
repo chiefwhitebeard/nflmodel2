@@ -1,0 +1,2 @@
+"validation_date","prediction_date","prediction_file","games_validated","games_incomplete","winner_accuracy","spread_mae","total_mae","model_bias"
+2025-10-22,"2025-10-14","predictions_primary_2025-10-14.csv",15,0,0.666666666666667,12.0499122465942,10.8266666666667,-5.5432039132609
