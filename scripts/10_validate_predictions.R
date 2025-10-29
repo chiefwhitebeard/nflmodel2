@@ -81,6 +81,13 @@ total_mae <- mean(results$total_error, na.rm = TRUE)
 avg_model_bias <- mean(results$model_vs_actual_diff, na.rm = TRUE)
 
 cat("\n=== Validation Results ===\n")
+
+# Simple record summary
+wins <- sum(results$winner_correct)
+losses <- sum(!results$winner_correct)
+total_games <- nrow(results)
+
+cat(paste("Record:", wins, "-", losses, "out of", total_games, "games\n"))
 cat(paste("Winner Accuracy:", round(winner_accuracy * 100, 1), "%\n"))
 cat(paste("Spread MAE:", round(spread_mae, 2), "points\n"))
 cat(paste("Total MAE:", round(total_mae, 2), "points\n"))
