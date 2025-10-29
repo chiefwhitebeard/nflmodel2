@@ -59,7 +59,18 @@ cat(paste("Found", nrow(results), "completed games to validate\n"))
 if (!"final_spread" %in% names(results)) {
   cat("  Note: Using legacy column names (pre-v3 format)\n")
   results$final_spread <- results$predicted_spread_weather_adjusted
-  results$final_home_win_probability <- results$home_win_probability_injury_adjusted
+
+  # Check for both possible column name variants in old CSVs
+  if ("cover_probability_weather_adjusted" %in% names(results)) {
+    results$final_home_win_probability <- results$cover_probability_weather_adjusted
+  } else if ("home_win_probability_weather_adjusted" %in% names(results)) {
+    results$final_home_win_probability <- results$home_win_probability_weather_adjusted
+  } else if ("home_win_probability_injury_adjusted" %in% names(results)) {
+    results$final_home_win_probability <- results$home_win_probability_injury_adjusted
+  } else {
+    cat("  Warning: Could not find probability column, using base prediction\n")
+    results$final_home_win_probability <- results$home_win_probability
+  }
 } else {
   cat("  Note: Using v3 column names (final_spread, final_home_win_probability)\n")
 }
