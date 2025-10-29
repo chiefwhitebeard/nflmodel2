@@ -1,5 +1,6 @@
 # NFL Predictions Model - Validation Script
-# Validates predictions from LAST WEEK against actual results
+# Validates archived predictions against actual results
+# Updated to use v3 column names: final_spread and final_home_win_probability
 
 suppressPackageStartupMessages({
   library(nflreadr)
@@ -14,54 +15,28 @@ if (!dir.exists("data/validation")) {
   dir.create("data/validation", recursive = TRUE)
 }
 
-# Find prediction files from last week
-# We want files that are 6-8 days old (from last Tuesday's run)
-prediction_files <- list.files("data/predictions", 
-                               pattern = "^predictions_primary_\\d{4}-\\d{2}-\\d{2}\\.csv$", 
-                               full.names = TRUE)
+# Find most recent archived prediction file
+prediction_files <- list.files("data/predictions", pattern = "^predictions_primary_\\d{4}-\\d{2}-\\d{2}\\.csv$", full.names = TRUE)
 
 if (length(prediction_files) == 0) {
-  cat("No archived prediction files found. Run primary predictions first.\n")
+  cat("No archived prediction files found. Nothing to validate.\n")
   quit(save = "no", status = 0)
 }
 
-# Extract dates from filenames
-file_dates <- as.Date(gsub(".*predictions_primary_(\\d{4}-\\d{2}-\\d{2})\\.csv", "\\1", prediction_files))
-days_ago <- as.numeric(Sys.Date() - file_dates)
-
-cat(paste("Found", length(prediction_files), "primary prediction files\n"))
-cat(paste("Date range:", min(file_dates), "to", max(file_dates), "\n"))
-
-# Get file from 6-8 days ago (last week's Tuesday run)
-# This accounts for variation in when validation runs
-last_week_files <- prediction_files[days_ago >= 6 & days_ago <= 8]
-
-if (length(last_week_files) == 0) {
-  cat("No prediction files from last week (6-8 days ago) found.\n")
-  cat(paste("Files available are from:", paste(days_ago, "days ago\n")))
-  cat("This is expected if no games have been played since last prediction.\n")
-  quit(save = "no", status = 0)
-}
-
-# Get most recent of the last week files
-target_file <- last_week_files[order(file_dates[days_ago >= 6 & days_ago <= 8], decreasing = TRUE)][1]
-cat(paste("\nValidating:", basename(target_file), "\n"))
-cat(paste("File is from", days_ago[prediction_files == target_file], "days ago\n"))
+# Get most recent file
+latest_archive <- prediction_files[order(prediction_files, decreasing = TRUE)][1]
+cat(paste("Validating:", basename(latest_archive), "\n"))
 
 # Load predictions
-predictions <- read.csv(target_file, stringsAsFactors = FALSE)
+predictions <- read.csv(latest_archive, stringsAsFactors = FALSE)
 predictions$game_date <- as.Date(predictions$game_date)
 
-cat(paste("Loaded", nrow(predictions), "predictions\n"))
-cat(paste("Game dates:", min(predictions$game_date), "to", max(predictions$game_date), "\n"))
-
-# Load actual results
+# Load actual results for games in prediction set
 current_season <- year(Sys.Date())
 if (month(Sys.Date()) < 3) {
   current_season <- current_season - 1
 }
 
-cat(paste("Loading", current_season, "season results...\n"))
 schedule <- load_schedules(seasons = current_season)
 schedule$gameday <- as.Date(schedule$gameday)
 
@@ -74,15 +49,20 @@ results <- predictions %>%
   filter(!is.na(home_score))  # Only completed games
 
 if (nrow(results) == 0) {
-  cat("\nNo completed games found yet for these predictions.\n")
-  cat("This means games have not been played or results are not yet in nflreadr.\n")
-  cat("Games predicted for:", unique(predictions$game_date), "\n")
-  cat("This is normal if validating immediately after games finish.\n")
+  cat("No completed games found for validation yet.\n")
   quit(save = "no", status = 0)
 }
 
-cat(paste("\nFound", nrow(results), "completed games to validate\n"))
-cat(paste("Incomplete games:", nrow(predictions) - nrow(results), "\n"))
+cat(paste("Found", nrow(results), "completed games to validate\n"))
+
+# Handle both old and new column formats for backward compatibility
+if (!"final_spread" %in% names(results)) {
+  cat("  Note: Using legacy column names (pre-v3 format)\n")
+  results$final_spread <- results$predicted_spread_weather_adjusted
+  results$final_home_win_probability <- results$home_win_probability_injury_adjusted
+} else {
+  cat("  Note: Using v3 column names (final_spread, final_home_win_probability)\n")
+}
 
 # Calculate validation metrics
 results <- results %>%
@@ -91,12 +71,14 @@ results <- results %>%
     actual_spread = home_score - away_score,
     actual_total = home_score + away_score,
     
+    # Use final predictions for validation
     winner_correct = (predicted_winner == home_team & actual_home_win) | 
       (predicted_winner == away_team & !actual_home_win),
-    spread_error = abs(predicted_spread_weather_adjusted - actual_spread),
+    spread_error = abs(final_spread - actual_spread),
     total_error = abs(predicted_total - actual_total),
     
-    model_vs_actual_diff = predicted_spread_weather_adjusted - actual_spread
+    # Model bias
+    model_vs_actual_diff = final_spread - actual_spread
   )
 
 # Summary metrics
@@ -111,6 +93,21 @@ cat(paste("Spread MAE:", round(spread_mae, 2), "points\n"))
 cat(paste("Total MAE:", round(total_mae, 2), "points\n"))
 cat(paste("Model Bias:", round(avg_model_bias, 2), "points (+ favors home)\n"))
 
+# Breakdown by adjustment stage (if v3 columns exist)
+if ("base_spread" %in% names(results) && "spread_after_injuries" %in% names(results)) {
+  cat("\n=== Adjustment Impact Analysis ===\n")
+  
+  base_mae <- mean(abs(results$base_spread - results$actual_spread), na.rm = TRUE)
+  injury_mae <- mean(abs(results$spread_after_injuries - results$actual_spread), na.rm = TRUE)
+  final_mae <- spread_mae
+  
+  cat(paste("Base Model MAE:", round(base_mae, 2), "points\n"))
+  cat(paste("After Injuries MAE:", round(injury_mae, 2), "points (", 
+            ifelse(injury_mae < base_mae, "✓ improved", "⚠ worse"), ")\n"))
+  cat(paste("After Weather MAE:", round(final_mae, 2), "points (", 
+            ifelse(final_mae < injury_mae, "✓ improved", "⚠ worse"), ")\n"))
+}
+
 # Save detailed results
 validation_date <- Sys.Date()
 detail_file <- paste0("data/validation/validation_detail_", validation_date, ".csv")
@@ -121,9 +118,7 @@ cat(paste("\n✓ Detailed results saved to", detail_file, "\n"))
 log_entry <- data.frame(
   validation_date = validation_date,
   prediction_date = unique(predictions$prediction_date)[1],
-  prediction_file = basename(target_file),
   games_validated = nrow(results),
-  games_incomplete = nrow(predictions) - nrow(results),
   winner_accuracy = winner_accuracy,
   spread_mae = spread_mae,
   total_mae = total_mae,
