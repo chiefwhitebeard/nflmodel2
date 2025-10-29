@@ -20,12 +20,14 @@ For the current week's games:
 ## 🤖 Automation
 
 Runs automatically via GitHub Actions:
-- **Monday at 9 AM ET**
-- **Wednesday at 9 AM ET**
-- **Saturday at 9 AM ET**
-- **Sunday at 9 AM ET**
+- **Tuesday at 6 AM ET** (primary prediction run)
 
 Manual trigger available from GitHub Actions tab.
+
+**Continuous Testing:**
+- Tests run automatically on every push to main
+- Validates predictions structure and value ranges
+- 34 unit tests covering data integrity and calculations
 
 ## 📁 Project Structure
 
@@ -34,22 +36,35 @@ nflmodel2/
 ├── scripts/
 │   ├── 00_setup.R                           # Package installation
 │   ├── 01_load_data.R                       # Load 3+ seasons
-│   ├── 02_calculate_features.R              # Elo + rolling stats
+│   ├── 02_calculate_features.R              # Elo + rolling stats + EPA
 │   ├── 03_train_model.R                     # Train models
 │   ├── 04_make_predictions.R                # Base predictions
-│   ├── 05_calculate_defensive_ratings.R     # Defensive EPA
+│   ├── 05_calculate_defensive_ratings.R     # Defensive EPA by position
 │   ├── 06_adjust_injuries_opponent_context.R # Injury adjustments
 │   ├── 07_integrate_weather.R               # Weather forecasts
-│   └── 08_backup_qb_performance.R           # QB performance DB
+│   ├── 08_backup_qb_performance.R           # QB performance DB
+│   ├── 10_validate_predictions.R            # Post-game validation
+│   └── 11_accuracy_dashboard.R              # Performance tracking
 ├── data/
 │   ├── predictions/
-│   │   ├── latest_predictions.csv           # Current (17 columns)
-│   │   └── predictions_YYYY-MM-DD.csv       # Dated archive
+│   │   ├── latest_predictions.csv           # Current predictions (21 columns)
+│   │   └── predictions_YYYY-MM-DD.csv       # Dated archives
+│   ├── validation/
+│   │   ├── validation_detail_YYYY-MM-DD.csv # Detailed validation results
+│   │   └── accuracy_log.csv                 # Historical accuracy tracking
 │   ├── injury_report.csv                    # Verification checklist
-│   └── [cached data files]
+│   └── [cached .rds data files]
 ├── models/
-│   └── nfl_models.rds
-└── run_weekly_predictions.R
+│   └── nfl_models.rds                       # Trained prediction models
+├── tests/
+│   ├── test_predictions.R                   # 34 unit tests
+│   ├── run_tests.R                          # Test runner
+│   └── README.md                            # Testing documentation
+├── .github/workflows/
+│   ├── predictions.yml                      # Weekly prediction automation
+│   └── tests.yml                            # Continuous testing
+├── CLAUDE.md                                # AI assistant documentation
+└── run_weekly_predictions.R                 # Master pipeline script
 ```
 
 ## 🔧 How It Works
@@ -80,18 +95,22 @@ nflmodel2/
 
 ### Output Files
 
-**latest_predictions.csv (17 columns):**
-- Game info, teams, date
-- Predicted winner and probabilities
-- Base spread and injury/weather adjusted spreads
-- Impact values for each adjustment
-- Detailed injury list per team
-- Weather conditions
+**latest_predictions.csv (21 columns):**
+- **Core Info**: game_date, away_team, home_team, predicted_winner
+- **Final Predictions**: final_spread, final_home_win_probability, predicted_total
+- **Adjustment Breakdown**: base_spread, spread_after_injuries, injury_impact (home/away)
+- **Weather Data**: temp, wind_speed, precipitation, weather_impact
+- **Details**: home_injuries, away_injuries, prediction_date
 
 **injury_report.csv:**
 - All teams' injuries (OUT/DOUBTFUL/QUESTIONABLE)
 - Sorted by team and position priority
 - Use for manual verification before betting
+
+**validation_detail_YYYY-MM-DD.csv:**
+- All prediction columns + actual game results
+- Includes: actual_spread, actual_total, winner_correct, spread_error
+- Generated after games complete for accuracy tracking
 
 ## 🚀 Usage
 
@@ -139,15 +158,19 @@ Runtime: ~25-45 seconds
 =IMPORTDATA("https://raw.githubusercontent.com/chiefwhitebeard/nflmodel2/main/data/predictions/latest_predictions.csv")
 ```
 
-## ⚙️ Enhancements
+## ⚙️ Features
 
-✅ Opponent-adjusted defensive ratings  
-✅ QB-specific injury impact  
-✅ Weather integration  
-✅ Backup QB performance database  
-✅ ESPN depth chart integration  
-✅ Injury report export  
-✅ Automated GitHub Actions  
+✅ Opponent-adjusted defensive ratings
+✅ QB-specific injury impact
+✅ Weather integration (Open-Meteo API)
+✅ Backup QB performance database
+✅ ESPN depth chart integration
+✅ Injury report export
+✅ Automated GitHub Actions
+✅ Post-game validation system
+✅ Unit test suite (34 tests)
+✅ Continuous testing workflow
+✅ CLAUDE.md AI assistant documentation  
 
 ## 🔍 Data Sources
 
@@ -200,7 +223,45 @@ This model keeps you disciplined by mostly saying "no bet":
 - Usually: ESPN timeouts or rate limits
 - Retries on next scheduled run
 
-## 📚 Model Validation
+## 📚 Model Validation & Testing
+
+### Post-Game Validation
+```r
+Rscript scripts/10_validate_predictions.R
+```
+
+Validates predictions against actual results:
+- Record: X-Y out of Z games
+- Winner accuracy percentage
+- Spread and total MAE
+- Model bias detection
+- Adjustment impact analysis
+
+Results saved to `data/validation/` for historical tracking.
+
+### Unit Tests
+```bash
+# Run test suite
+Rscript tests/run_tests.R
+
+# Or from R console
+library(testthat)
+test_dir("tests")
+```
+
+**34 tests covering:**
+- Data file existence and structure
+- Prediction column validation
+- Value range checks (probabilities, spreads, totals)
+- Team abbreviation validation
+- Model object structure
+- Probability conversion math
+- Adjustment logic integrity
+- Prediction date validity
+
+Tests run automatically on every push via GitHub Actions.
+
+### Market Alignment
 
 Model tracking market within 0.3 points means:
 - Math is correct
