@@ -1,6 +1,5 @@
 # NFL Predictions Model - Validation Script
 # Validates archived predictions against actual results
-# Updated to use v3 column names: final_spread and final_home_win_probability
 
 suppressPackageStartupMessages({
   library(nflreadr)
@@ -55,41 +54,34 @@ if (nrow(results) == 0) {
 
 cat(paste("Found", nrow(results), "completed games to validate\n"))
 
-# Handle both old and new column formats for backward compatibility
-if (!"final_spread" %in% names(results)) {
-  cat("  Note: Using legacy column names (pre-v3 format)\n")
-  results$final_spread <- results$predicted_spread_weather_adjusted
-
-  # Check for both possible column name variants in old CSVs
-  if ("cover_probability_weather_adjusted" %in% names(results)) {
-    results$final_home_win_probability <- results$cover_probability_weather_adjusted
-  } else if ("home_win_probability_weather_adjusted" %in% names(results)) {
-    results$final_home_win_probability <- results$home_win_probability_weather_adjusted
-  } else if ("home_win_probability_injury_adjusted" %in% names(results)) {
-    results$final_home_win_probability <- results$home_win_probability_injury_adjusted
-  } else {
-    cat("  Warning: Could not find probability column, using base prediction\n")
-    results$final_home_win_probability <- results$home_win_probability
-  }
+# Determine which spread column to use (use the most adjusted version available)
+spread_col <- if ("adjusted_spread" %in% names(results)) {
+  "adjusted_spread"
+} else if ("predicted_spread_weather_adjusted" %in% names(results)) {
+  "predicted_spread_weather_adjusted"
+} else if ("predicted_spread_injury_adjusted" %in% names(results)) {
+  "predicted_spread_injury_adjusted"
 } else {
-  cat("  Note: Using v3 column names (final_spread, final_home_win_probability)\n")
+  "predicted_spread"
 }
 
-# Calculate validation metrics
+cat(paste("  Using spread column:", spread_col, "\n"))
+
+# Calculate validation metrics using actual prediction column names
 results <- results %>%
   mutate(
     actual_home_win = home_score > away_score,
     actual_spread = home_score - away_score,
     actual_total = home_score + away_score,
-    
-    # Use final predictions for validation
-    winner_correct = (predicted_winner == home_team & actual_home_win) | 
+
+    # Use predictions as they are named in the file
+    winner_correct = (predicted_winner == home_team & actual_home_win) |
       (predicted_winner == away_team & !actual_home_win),
-    spread_error = abs(final_spread - actual_spread),
+    spread_error = abs(.data[[spread_col]] - actual_spread),
     total_error = abs(predicted_total - actual_total),
-    
+
     # Model bias
-    model_vs_actual_diff = final_spread - actual_spread
+    model_vs_actual_diff = .data[[spread_col]] - actual_spread
   )
 
 # Summary metrics
@@ -104,19 +96,27 @@ cat(paste("Spread MAE:", round(spread_mae, 2), "points\n"))
 cat(paste("Total MAE:", round(total_mae, 2), "points\n"))
 cat(paste("Model Bias:", round(avg_model_bias, 2), "points (+ favors home)\n"))
 
-# Breakdown by adjustment stage (if v3 columns exist)
-if ("base_spread" %in% names(results) && "spread_after_injuries" %in% names(results)) {
+# Breakdown by adjustment stage (using actual prediction column names)
+if ("predicted_spread" %in% names(results) && "predicted_spread_injury_adjusted" %in% names(results)) {
   cat("\n=== Adjustment Impact Analysis ===\n")
-  
-  base_mae <- mean(abs(results$base_spread - results$actual_spread), na.rm = TRUE)
-  injury_mae <- mean(abs(results$spread_after_injuries - results$actual_spread), na.rm = TRUE)
-  final_mae <- spread_mae
-  
+
+  base_mae <- mean(abs(results$predicted_spread - results$actual_spread), na.rm = TRUE)
+  injury_mae <- mean(abs(results$predicted_spread_injury_adjusted - results$actual_spread), na.rm = TRUE)
+
   cat(paste("Base Model MAE:", round(base_mae, 2), "points\n"))
-  cat(paste("After Injuries MAE:", round(injury_mae, 2), "points (", 
+  cat(paste("After Injuries MAE:", round(injury_mae, 2), "points (",
             ifelse(injury_mae < base_mae, "✓ improved", "⚠ worse"), ")\n"))
-  cat(paste("After Weather MAE:", round(final_mae, 2), "points (", 
-            ifelse(final_mae < injury_mae, "✓ improved", "⚠ worse"), ")\n"))
+
+  if ("predicted_spread_weather_adjusted" %in% names(results)) {
+    weather_mae <- mean(abs(results$predicted_spread_weather_adjusted - results$actual_spread), na.rm = TRUE)
+    cat(paste("After Weather MAE:", round(weather_mae, 2), "points (",
+              ifelse(weather_mae < injury_mae, "✓ improved", "⚠ worse"), ")\n"))
+  }
+
+  if ("adjusted_spread" %in% names(results)) {
+    final_mae <- mean(abs(results$adjusted_spread - results$actual_spread), na.rm = TRUE)
+    cat(paste("Final Adjusted MAE:", round(final_mae, 2), "points\n"))
+  }
 }
 
 # Save detailed results
