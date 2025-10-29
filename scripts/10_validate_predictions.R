@@ -54,34 +54,50 @@ if (nrow(results) == 0) {
 
 cat(paste("Found", nrow(results), "completed games to validate\n"))
 
-# Determine which spread column to use (use the most adjusted version available)
-spread_col <- if ("adjusted_spread" %in% names(results)) {
-  "adjusted_spread"
+# Map prediction columns to clean "final_" columns for validation output
+# Use the most adjusted version available
+if ("adjusted_spread" %in% names(results)) {
+  results$final_spread <- results$adjusted_spread
+  cat("  Using adjusted_spread for final_spread\n")
 } else if ("predicted_spread_weather_adjusted" %in% names(results)) {
-  "predicted_spread_weather_adjusted"
+  results$final_spread <- results$predicted_spread_weather_adjusted
+  cat("  Using predicted_spread_weather_adjusted for final_spread\n")
 } else if ("predicted_spread_injury_adjusted" %in% names(results)) {
-  "predicted_spread_injury_adjusted"
+  results$final_spread <- results$predicted_spread_injury_adjusted
+  cat("  Using predicted_spread_injury_adjusted for final_spread\n")
 } else {
-  "predicted_spread"
+  results$final_spread <- results$predicted_spread
+  cat("  Using predicted_spread for final_spread\n")
 }
 
-cat(paste("  Using spread column:", spread_col, "\n"))
+# Map probability column
+if ("adjusted_cover_probability" %in% names(results)) {
+  results$final_cover_probability <- results$adjusted_cover_probability
+} else if ("cover_probability_weather_adjusted" %in% names(results)) {
+  results$final_cover_probability <- results$cover_probability_weather_adjusted
+} else if ("cover_probability_injury_adjusted" %in% names(results)) {
+  results$final_cover_probability <- results$cover_probability_injury_adjusted
+} else if ("cover_probability" %in% names(results)) {
+  results$final_cover_probability <- results$cover_probability
+} else {
+  results$final_cover_probability <- results$home_win_probability
+}
 
-# Calculate validation metrics using actual prediction column names
+# Calculate validation metrics using clean final columns
 results <- results %>%
   mutate(
     actual_home_win = home_score > away_score,
     actual_spread = home_score - away_score,
     actual_total = home_score + away_score,
 
-    # Use predictions as they are named in the file
+    # Use final columns
     winner_correct = (predicted_winner == home_team & actual_home_win) |
       (predicted_winner == away_team & !actual_home_win),
-    spread_error = abs(.data[[spread_col]] - actual_spread),
+    spread_error = abs(final_spread - actual_spread),
     total_error = abs(predicted_total - actual_total),
 
     # Model bias
-    model_vs_actual_diff = .data[[spread_col]] - actual_spread
+    model_vs_actual_diff = final_spread - actual_spread
   )
 
 # Summary metrics
