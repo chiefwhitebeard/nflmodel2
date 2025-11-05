@@ -118,7 +118,9 @@ cat(paste("\n✓ Detailed results saved to", detail_file, "\n"))
 log_entry <- data.frame(
   validation_date = validation_date,
   prediction_date = unique(predictions$prediction_date)[1],
+  prediction_file = basename(latest_archive),
   games_validated = nrow(results),
+  games_incomplete = 0,  # All games in results are completed by definition
   winner_accuracy = winner_accuracy,
   spread_mae = spread_mae,
   total_mae = total_mae,

@@ -52,7 +52,7 @@ jobs:
           RUN_TYPE: ${{ github.event.inputs.run_type || 'primary' }}
         run: |
           Rscript run_weekly_predictions.R
-      
+
       - name: Commit and push predictions
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
