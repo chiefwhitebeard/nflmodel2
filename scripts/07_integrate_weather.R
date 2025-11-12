@@ -214,13 +214,13 @@ final_predictions <- predictions %>%
     prediction_date
   )
 
-# Save updated predictions
-write.csv(final_predictions, "data/predictions/latest_predictions.csv", row.names = FALSE)
-
-# Also save as latest_tracking if this is a tracking run
+# Save updated predictions - use latest_tracking.csv for tracking runs
 if (Sys.getenv("RUN_TYPE") == "tracking") {
   write.csv(final_predictions, "data/predictions/latest_tracking.csv", row.names = FALSE)
-  cat("✓ Also saved as latest_tracking.csv\n")
+  cat("✓ Saved to latest_tracking.csv (tracking run - latest_predictions.csv preserved)\n")
+} else {
+  write.csv(final_predictions, "data/predictions/latest_predictions.csv", row.names = FALSE)
+  cat("✓ Saved to latest_predictions.csv\n")
 }
 
 # Save dated copy with identical structure

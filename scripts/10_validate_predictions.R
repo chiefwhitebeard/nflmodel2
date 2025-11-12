@@ -14,7 +14,7 @@ if (!dir.exists("data/validation")) {
   dir.create("data/validation", recursive = TRUE)
 }
 
-# Find most recent archived prediction file
+# Find most recent archived prediction file with ALL games completed
 prediction_files <- list.files("data/predictions", pattern = "^predictions_primary_\\d{4}-\\d{2}-\\d{2}\\.csv$", full.names = TRUE)
 
 if (length(prediction_files) == 0) {
@@ -22,15 +22,7 @@ if (length(prediction_files) == 0) {
   quit(save = "no", status = 0)
 }
 
-# Get most recent file
-latest_archive <- prediction_files[order(prediction_files, decreasing = TRUE)][1]
-cat(paste("Validating:", basename(latest_archive), "\n"))
-
-# Load predictions
-predictions <- read.csv(latest_archive, stringsAsFactors = FALSE)
-predictions$game_date <- as.Date(predictions$game_date)
-
-# Load actual results for games in prediction set
+# Load actual results for current season
 current_season <- year(Sys.Date())
 if (month(Sys.Date()) < 3) {
   current_season <- current_season - 1
@@ -39,18 +31,55 @@ if (month(Sys.Date()) < 3) {
 schedule <- load_schedules(seasons = current_season)
 schedule$gameday <- as.Date(schedule$gameday)
 
-# Match predictions to actual results
+# Sort prediction files from newest to oldest and find first with all games complete
+prediction_files_sorted <- prediction_files[order(prediction_files, decreasing = TRUE)]
+
+latest_archive <- NULL
+predictions <- NULL
+
+for (pred_file in prediction_files_sorted) {
+  cat(paste("Checking:", basename(pred_file), "... "))
+
+  temp_predictions <- read.csv(pred_file, stringsAsFactors = FALSE)
+  temp_predictions$game_date <- as.Date(temp_predictions$game_date)
+
+  # Match to actual results
+  temp_results <- temp_predictions %>%
+    left_join(
+      schedule %>% select(gameday, home_team, away_team, home_score, away_score, result),
+      by = c("game_date" = "gameday", "home_team", "away_team")
+    )
+
+  # Check if ALL games are complete
+  total_games <- nrow(temp_predictions)
+  completed_games <- sum(!is.na(temp_results$home_score))
+
+  cat(paste(completed_games, "/", total_games, "games complete"))
+
+  if (completed_games == total_games && total_games > 0) {
+    cat(" ✓ Using this file\n")
+    latest_archive <- pred_file
+    predictions <- temp_predictions
+    break
+  } else {
+    cat("\n")
+  }
+}
+
+if (is.null(latest_archive)) {
+  cat("\nNo prediction files found with all games completed.\n")
+  quit(save = "no", status = 0)
+}
+
+cat(paste("\nValidating:", basename(latest_archive), "\n"))
+
+# Match predictions to actual results (we know all games are complete)
 results <- predictions %>%
   left_join(
     schedule %>% select(gameday, home_team, away_team, home_score, away_score, result),
     by = c("game_date" = "gameday", "home_team", "away_team")
   ) %>%
   filter(!is.na(home_score))  # Only completed games
-
-if (nrow(results) == 0) {
-  cat("No completed games found for validation yet.\n")
-  quit(save = "no", status = 0)
-}
 
 cat(paste("Found", nrow(results), "completed games to validate\n"))
 
@@ -116,7 +145,7 @@ cat(paste("\n✓ Detailed results saved to", detail_file, "\n"))
 
 # Append to accuracy log
 log_entry <- data.frame(
-  validation_date = validation_date,
+  validation_date = as.character(validation_date),  # Format as string to prevent numeric serialization
   prediction_date = unique(predictions$prediction_date)[1],
   prediction_file = basename(latest_archive),
   games_validated = nrow(results),
