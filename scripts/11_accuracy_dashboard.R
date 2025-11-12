@@ -81,12 +81,12 @@ cat("\n=== Generating plots ===\n")
 
 # 1. Winner Accuracy Over Time
 p1 <- ggplot(log_data, aes(x = validation_date, y = winner_accuracy * 100)) +
-  geom_line(color = "steelblue", size = 1) +
+  geom_line(color = "steelblue", linewidth = 1) +
   geom_point(color = "steelblue", size = 3) +
   geom_hline(yintercept = 60, linetype = "dashed", color = "red", alpha = 0.5) +
-  geom_hline(yintercept = 68.8, linetype = "dashed", color = "darkgreen", alpha = 0.5) +
+  geom_hline(yintercept = 93.4, linetype = "dashed", color = "darkgreen", alpha = 0.5) +
   labs(title = "Winner Prediction Accuracy Over Time",
-       subtitle = "Green line = training accuracy (68.8%), Red line = minimum threshold (60%)",
+       subtitle = "Green line = training accuracy (93.4%), Red line = minimum threshold (60%)",
        x = "Validation Date", y = "Accuracy (%)") +
   theme_minimal() +
   theme(plot.title = element_text(face = "bold"))
@@ -96,12 +96,12 @@ cat("✓ Saved winner accuracy plot\n")
 
 # 2. Spread MAE Over Time
 p2 <- ggplot(log_data, aes(x = validation_date, y = spread_mae)) +
-  geom_line(color = "coral", size = 1) +
+  geom_line(color = "coral", linewidth = 1) +
   geom_point(color = "coral", size = 3) +
-  geom_hline(yintercept = 8.95, linetype = "dashed", color = "darkgreen", alpha = 0.5) +
+  geom_hline(yintercept = 1.68, linetype = "dashed", color = "darkgreen", alpha = 0.5) +
   geom_hline(yintercept = 12, linetype = "dashed", color = "red", alpha = 0.5) +
   labs(title = "Spread Mean Absolute Error Over Time",
-       subtitle = "Green line = training MAE (8.95), Red line = alert threshold (12)",
+       subtitle = "Green line = training MAE (1.68), Red line = alert threshold (12)",
        x = "Validation Date", y = "MAE (points)") +
   theme_minimal() +
   theme(plot.title = element_text(face = "bold"))
@@ -111,7 +111,7 @@ cat("✓ Saved spread MAE plot\n")
 
 # 3. Model Bias Over Time
 p3 <- ggplot(log_data, aes(x = validation_date, y = model_bias)) +
-  geom_line(color = "purple", size = 1) +
+  geom_line(color = "purple", linewidth = 1) +
   geom_point(color = "purple", size = 3) +
   geom_hline(yintercept = 0, linetype = "solid", color = "gray", alpha = 0.5) +
   geom_hline(yintercept = 2, linetype = "dashed", color = "red", alpha = 0.5) +
@@ -128,49 +128,58 @@ cat("✓ Saved model bias plot\n")
 # 4. Cover Rate Over Time
 if ("overall_cover_rate" %in% names(log_data)) {
   p4 <- ggplot(log_data, aes(x = validation_date, y = overall_cover_rate * 100)) +
-    geom_line(color = "darkgreen", size = 1) +
+    geom_line(color = "darkgreen", linewidth = 1) +
     geom_point(color = "darkgreen", size = 3) +
     geom_hline(yintercept = 50, linetype = "solid", color = "gray", alpha = 0.5) +
     geom_hline(yintercept = 40, linetype = "dashed", color = "red", alpha = 0.5) +
     geom_hline(yintercept = 60, linetype = "dashed", color = "red", alpha = 0.5) +
     labs(title = "Overall Cover Rate Over Time",
-         subtitle = "Gray line = 50% (ideal), Red lines = alert thresholds",
+         subtitle = "Gray line = 50% (ideal calibration), Red lines = alert thresholds",
          x = "Validation Date", y = "Cover Rate (%)") +
     theme_minimal() +
     theme(plot.title = element_text(face = "bold"))
-  
+
   ggsave("data/validation/plot_cover_rate.png", p4, width = 10, height = 6)
   cat("✓ Saved cover rate plot\n")
 }
 
 # 5. Cover Rate by Spread Bucket (if enough data)
-if (file.exists("data/validation/cover_rates_by_spread.csv")) {
-  cover_db <- read.csv("data/validation/cover_rates_by_spread.csv", stringsAsFactors = FALSE)
-  
+cover_files <- list.files("data/validation", pattern = "^cover_by_spread_\\d{4}-\\d{2}-\\d{2}\\.csv$", full.names = TRUE)
+
+if (length(cover_files) > 0) {
+  # Load all cover analysis files
+  cover_data_list <- lapply(cover_files, function(f) {
+    df <- read.csv(f, stringsAsFactors = FALSE)
+    df$validation_date <- gsub(".*cover_by_spread_(\\d{4}-\\d{2}-\\d{2})\\.csv", "\\1", basename(f))
+    df
+  })
+
+  cover_db <- do.call(rbind, cover_data_list)
+
   # Aggregate across all validations
   cover_summary <- cover_db %>%
     group_by(spread_bucket) %>%
     summarise(
       total_games = sum(games),
       avg_cover_rate = weighted.mean(cover_rate, games),
-      avg_predicted_prob = weighted.mean(avg_predicted_cover_prob, games),
+      avg_predicted_spread = weighted.mean(avg_predicted_spread, games),
       .groups = "drop"
     ) %>%
-    filter(total_games >= 3)  # Only show buckets with 3+ games
-  
+    filter(total_games >= 3) %>%  # Only show buckets with 3+ games
+    arrange(avg_predicted_spread)
+
   if (nrow(cover_summary) > 0) {
-    p5 <- ggplot(cover_summary, aes(x = spread_bucket, y = avg_cover_rate)) +
+    p5 <- ggplot(cover_summary, aes(x = reorder(spread_bucket, avg_predicted_spread), y = avg_cover_rate)) +
       geom_col(fill = "steelblue", alpha = 0.7) +
-      geom_line(aes(y = avg_predicted_prob), color = "red", size = 1) +
-      geom_point(aes(y = avg_predicted_prob), color = "red", size = 3) +
       geom_hline(yintercept = 50, linetype = "dashed", color = "gray") +
       geom_text(aes(label = total_games), vjust = -0.5, size = 3) +
       labs(title = "Cover Rate by Spread Bucket",
-           subtitle = "Blue bars = actual cover rate, Red line = predicted cover probability. Numbers = total games.",
-           x = "Predicted Spread (points)", y = "Cover Rate (%)") +
+           subtitle = "Blue bars = actual cover rate. Gray line = 50% (ideal). Numbers = total games.",
+           x = "Predicted Spread Bucket", y = "Cover Rate (%)") +
       theme_minimal() +
-      theme(plot.title = element_text(face = "bold"))
-    
+      theme(plot.title = element_text(face = "bold"),
+            axis.text.x = element_text(angle = 45, hjust = 1))
+
     ggsave("data/validation/plot_cover_by_spread.png", p5, width = 12, height = 6)
     cat("✓ Saved cover rate by spread plot\n")
   }
@@ -198,7 +207,7 @@ log_long <- log_long %>%
   )
 
 p6 <- ggplot(log_long, aes(x = validation_date, y = normalized_value, color = metric_label)) +
-  geom_line(size = 1) +
+  geom_line(linewidth = 1) +
   geom_point(size = 2) +
   labs(title = "All Metrics Over Time",
        x = "Validation Date", y = "Value", color = "Metric") +

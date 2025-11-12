@@ -100,7 +100,12 @@ results <- results %>%
     total_error = abs(predicted_total - actual_total),
 
     # Model bias
-    model_vs_actual_diff = final_spread - actual_spread
+    model_vs_actual_diff = final_spread - actual_spread,
+
+    # Cover rate: did home team beat the predicted spread?
+    # If predicted_spread = +7, home covers if actual > 7 (won by more than 7)
+    # If predicted_spread = -7, home covers if actual > -7 (lost by less than 7)
+    home_covered = actual_spread > final_spread
   )
 
 # Summary metrics
@@ -108,6 +113,7 @@ winner_accuracy <- mean(results$winner_correct, na.rm = TRUE)
 spread_mae <- mean(results$spread_error, na.rm = TRUE)
 total_mae <- mean(results$total_error, na.rm = TRUE)
 avg_model_bias <- mean(results$model_vs_actual_diff, na.rm = TRUE)
+overall_cover_rate <- mean(results$home_covered, na.rm = TRUE)
 
 cat("\n=== Validation Results ===\n")
 
@@ -121,6 +127,7 @@ cat(paste("Winner Accuracy:", round(winner_accuracy * 100, 1), "%\n"))
 cat(paste("Spread MAE:", round(spread_mae, 2), "points\n"))
 cat(paste("Total MAE:", round(total_mae, 2), "points\n"))
 cat(paste("Model Bias:", round(avg_model_bias, 2), "points (+ favors home)\n"))
+cat(paste("Cover Rate:", round(overall_cover_rate * 100, 1), "% (ideal = 50%)\n"))
 
 # Breakdown by adjustment stage
 if ("base_spread" %in% names(results) && "spread_after_injuries" %in% names(results)) {
@@ -154,6 +161,7 @@ log_entry <- data.frame(
   spread_mae = spread_mae,
   total_mae = total_mae,
   model_bias = avg_model_bias,
+  overall_cover_rate = overall_cover_rate,
   stringsAsFactors = FALSE
 )
 
@@ -167,6 +175,47 @@ if (file.exists(log_file)) {
 
 write.csv(log_data, log_file, row.names = FALSE)
 cat(paste("✓ Updated accuracy log:", log_file, "\n"))
+
+# Cover rate analysis by spread bucket
+cat("\n=== Cover Rate by Spread Bucket ===\n")
+results_with_buckets <- results %>%
+  mutate(
+    spread_bucket = case_when(
+      final_spread <= -10 ~ "Away by 10+",
+      final_spread <= -7 ~ "Away by 7-10",
+      final_spread <= -3.5 ~ "Away by 3.5-7",
+      final_spread <= -0.5 ~ "Away by 0.5-3.5",
+      final_spread < 0.5 ~ "Pick'em",
+      final_spread < 3.5 ~ "Home by 0.5-3.5",
+      final_spread < 7 ~ "Home by 3.5-7",
+      final_spread < 10 ~ "Home by 7-10",
+      TRUE ~ "Home by 10+"
+    )
+  )
+
+cover_by_spread <- results_with_buckets %>%
+  group_by(spread_bucket) %>%
+  summarise(
+    games = n(),
+    cover_rate = mean(home_covered) * 100,
+    avg_predicted_spread = mean(final_spread),
+    avg_actual_spread = mean(actual_spread),
+    .groups = "drop"
+  ) %>%
+  arrange(avg_predicted_spread)
+
+if (nrow(cover_by_spread) > 0) {
+  for (i in 1:nrow(cover_by_spread)) {
+    row <- cover_by_spread[i,]
+    cat(sprintf("%-20s: %2d games, %4.1f%% cover rate\n",
+                row$spread_bucket, row$games, row$cover_rate))
+  }
+
+  # Save for dashboard
+  cover_file <- paste0("data/validation/cover_by_spread_", validation_date, ".csv")
+  write.csv(cover_by_spread, cover_file, row.names = FALSE)
+  cat(paste("✓ Saved cover analysis:", cover_file, "\n"))
+}
 
 # Performance alerts
 alerts <- c()
