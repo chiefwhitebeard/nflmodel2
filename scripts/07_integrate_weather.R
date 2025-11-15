@@ -222,8 +222,8 @@ run_prefix <- Sys.getenv("RUN_PREFIX", "manual")
 write.csv(final_predictions, latest_file, row.names = FALSE)
 cat(paste("✓ Saved to", latest_file, "\n"))
 
-# Save dated copy with run type prefix
-dated_file <- paste0("data/predictions/predictions_", run_prefix, "_", Sys.Date(), ".csv")
+# Save dated copy to appropriate subfolder with run type prefix
+dated_file <- paste0("data/predictions/", run_prefix, "/predictions_", run_prefix, "_", Sys.Date(), ".csv")
 write.csv(final_predictions, dated_file, row.names = FALSE)
 cat(paste("✓ Saved dated predictions:", dated_file, "\n"))
 
