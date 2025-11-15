@@ -9,13 +9,17 @@ suppressPackageStartupMessages({
 
 cat("Validating predictions against actual results...\n")
 
-# Create validation directory if needed
+# Create validation directories if needed
 if (!dir.exists("data/validation")) {
   dir.create("data/validation", recursive = TRUE)
 }
+if (!dir.exists("data/validation/details")) {
+  dir.create("data/validation/details", recursive = TRUE)
+}
 
 # Find most recent archived prediction file with ALL games completed
-prediction_files <- list.files("data/predictions", pattern = "^predictions_primary_\\d{4}-\\d{2}-\\d{2}\\.csv$", full.names = TRUE)
+# Look in primary subfolder for archived predictions
+prediction_files <- list.files("data/predictions/primary", pattern = "^predictions_primary_\\d{4}-\\d{2}-\\d{2}\\.csv$", full.names = TRUE)
 
 if (length(prediction_files) == 0) {
   cat("No archived prediction files found. Nothing to validate.\n")
@@ -144,9 +148,9 @@ if ("base_spread" %in% names(results) && "spread_after_injuries" %in% names(resu
             ifelse(final_mae < injury_mae, "✓ improved", "⚠ worse"), ")\n"))
 }
 
-# Save detailed results
+# Save detailed results to details subfolder
 validation_date <- Sys.Date()
-detail_file <- paste0("data/validation/validation_detail_", validation_date, ".csv")
+detail_file <- paste0("data/validation/details/validation_detail_", validation_date, ".csv")
 write.csv(results, detail_file, row.names = FALSE)
 cat(paste("\n✓ Detailed results saved to", detail_file, "\n"))
 
@@ -211,8 +215,8 @@ if (nrow(cover_by_spread) > 0) {
                 row$spread_bucket, row$games, row$cover_rate))
   }
 
-  # Save for dashboard
-  cover_file <- paste0("data/validation/cover_by_spread_", validation_date, ".csv")
+  # Save for dashboard to details subfolder
+  cover_file <- paste0("data/validation/details/cover_by_spread_", validation_date, ".csv")
   write.csv(cover_by_spread, cover_file, row.names = FALSE)
   cat(paste("✓ Saved cover analysis:", cover_file, "\n"))
 }
