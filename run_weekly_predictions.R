@@ -4,17 +4,31 @@
 # Determine run type from environment variable
 run_type <- Sys.getenv("RUN_TYPE", "manual")
 
+# Configure file paths based on run type (centralized configuration)
+if (run_type == "tracking") {
+  latest_file <- "data/predictions/latest_tracking.csv"
+  run_prefix <- "tracking"
+} else {
+  latest_file <- "data/predictions/latest_predictions.csv"
+  run_prefix <- ifelse(run_type == "primary", "primary", "manual")
+}
+
+# Export for scripts to use
+Sys.setenv(LATEST_FILE = latest_file)
+Sys.setenv(RUN_PREFIX = run_prefix)
+
 cat("========================================\n")
 cat(paste("NFL PREDICTIONS MODEL -", toupper(run_type), "RUN\n"))
+cat(paste("Output file:", latest_file, "\n"))
 cat("========================================\n\n")
 
-# Archive previous predictions before generating new ones
-if (file.exists("data/predictions/latest_predictions.csv")) {
-  prev_preds <- read.csv("data/predictions/latest_predictions.csv", stringsAsFactors = FALSE)
+# Archive previous predictions before generating new ones (primary/manual runs only)
+if (run_type != "tracking" && file.exists(latest_file)) {
+  prev_preds <- read.csv(latest_file, stringsAsFactors = FALSE)
   if (nrow(prev_preds) > 0) {
     archive_date <- unique(prev_preds$prediction_date)[1]
     archive_file <- paste0("data/predictions/predictions_", archive_date, ".csv")
-    
+
     if (!file.exists(archive_file)) {
       write.csv(prev_preds, archive_file, row.names = FALSE)
       cat(paste("✓ Archived previous predictions to", archive_file, "\n\n"))
@@ -23,22 +37,6 @@ if (file.exists("data/predictions/latest_predictions.csv")) {
 }
 
 start_time <- Sys.time()
-
-# Archive previous predictions before generating new ones
-if (file.exists("data/predictions/latest_predictions.csv")) {
-  prev_preds <- read.csv("data/predictions/latest_predictions.csv", stringsAsFactors = FALSE)
-  if (nrow(prev_preds) > 0) {
-    # Use prediction_date from the file for archive filename
-    archive_date <- unique(prev_preds$prediction_date)[1]
-    archive_file <- paste0("data/predictions/predictions_", archive_date, ".csv")
-    
-    # Only archive if this dated file doesn't exist
-    if (!file.exists(archive_file)) {
-      write.csv(prev_preds, archive_file, row.names = FALSE)
-      cat(paste("✓ Archived previous predictions to", archive_file, "\n\n"))
-    }
-  }
-}
 
 cat("STEP 1: Loading NFL data...\n")
 source("scripts/01_load_data.R")

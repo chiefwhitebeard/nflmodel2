@@ -87,8 +87,9 @@ get_weather_forecast <- function(lat, lon, game_date) {
   })
 }
 
-# Load current predictions
-predictions <- read.csv("data/predictions/latest_predictions.csv", stringsAsFactors = FALSE)
+# Load current predictions from appropriate file (configured in run_weekly_predictions.R)
+latest_file <- Sys.getenv("LATEST_FILE", "data/predictions/latest_predictions.csv")
+predictions <- read.csv(latest_file, stringsAsFactors = FALSE)
 
 cat(paste("  Fetching weather for", nrow(predictions), "games...\n"))
 
@@ -214,17 +215,15 @@ final_predictions <- predictions %>%
     prediction_date
   )
 
-# Save updated predictions - use latest_tracking.csv for tracking runs
-if (Sys.getenv("RUN_TYPE") == "tracking") {
-  write.csv(final_predictions, "data/predictions/latest_tracking.csv", row.names = FALSE)
-  cat("✓ Saved to latest_tracking.csv (tracking run - latest_predictions.csv preserved)\n")
-} else {
-  write.csv(final_predictions, "data/predictions/latest_predictions.csv", row.names = FALSE)
-  cat("✓ Saved to latest_predictions.csv\n")
-}
+# Save to appropriate file based on run type (configured in run_weekly_predictions.R)
+latest_file <- Sys.getenv("LATEST_FILE", "data/predictions/latest_predictions.csv")
+run_prefix <- Sys.getenv("RUN_PREFIX", "manual")
 
-# Save dated copy with identical structure
-dated_file <- paste0("data/predictions/predictions_", Sys.Date(), ".csv")
+write.csv(final_predictions, latest_file, row.names = FALSE)
+cat(paste("✓ Saved to", latest_file, "\n"))
+
+# Save dated copy with run type prefix
+dated_file <- paste0("data/predictions/predictions_", run_prefix, "_", Sys.Date(), ".csv")
 write.csv(final_predictions, dated_file, row.names = FALSE)
 cat(paste("✓ Saved dated predictions:", dated_file, "\n"))
 

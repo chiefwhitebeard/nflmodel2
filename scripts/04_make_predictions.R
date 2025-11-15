@@ -252,9 +252,10 @@ if (nrow(all_predictions) == 0) {
 
 cat(paste("\n✓ Generated predictions for", nrow(all_predictions), "games\n"))
 
-# Save as latest predictions only (dated copy will be created at end of pipeline)
-write.csv(all_predictions, "data/predictions/latest_predictions.csv", row.names = FALSE)
-cat("✓ Saved as data/predictions/latest_predictions.csv\n")
+# Save to appropriate file based on run type (configured in run_weekly_predictions.R)
+latest_file <- Sys.getenv("LATEST_FILE", "data/predictions/latest_predictions.csv")
+write.csv(all_predictions, latest_file, row.names = FALSE)
+cat(paste("✓ Saved as", latest_file, "\n"))
 
 # Display predictions
 cat("\n=== PREDICTIONS ===\n")

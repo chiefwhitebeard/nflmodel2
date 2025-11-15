@@ -12,8 +12,9 @@ suppressPackageStartupMessages({
 
 cat("Adjusting predictions for injuries...\n")
 
-# Load base predictions
-base_predictions <- read.csv("data/predictions/latest_predictions.csv", stringsAsFactors = FALSE)
+# Load base predictions from appropriate file (configured in run_weekly_predictions.R)
+latest_file <- Sys.getenv("LATEST_FILE", "data/predictions/latest_predictions.csv")
+base_predictions <- read.csv(latest_file, stringsAsFactors = FALSE)
 
 # Team name to abbreviation mapping
 team_map <- c(
@@ -481,8 +482,10 @@ final_predictions <- base_predictions %>%
     away_injuries
   )
 
-write.csv(final_predictions, "data/predictions/latest_predictions.csv", row.names = FALSE)
-cat("✓ Updated predictions with injury adjustments\n")
+# Save to appropriate file based on run type (configured in run_weekly_predictions.R)
+latest_file <- Sys.getenv("LATEST_FILE", "data/predictions/latest_predictions.csv")
+write.csv(final_predictions, latest_file, row.names = FALSE)
+cat(paste("✓ Updated", latest_file, "with injury adjustments\n"))
 
 significant_injuries <- final_predictions[abs(final_predictions$injury_impact) >= 3, ]
 if (nrow(significant_injuries) > 0) {
