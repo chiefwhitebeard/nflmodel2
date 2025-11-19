@@ -35,6 +35,7 @@ team_epa_by_game <- pbp_all %>%
     off_explosive_rate = mean(epa > 0.5, na.rm = TRUE),
     pass_epa = mean(epa[pass == 1], na.rm = TRUE),
     rush_epa = mean(epa[rush == 1], na.rm = TRUE),
+    pace = n(),  # Total plays per game (offensive pace)
     .groups = "drop"
   )
 
@@ -111,29 +112,83 @@ calculate_elo <- function(games, k = 20, initial_elo = 1500) {
 elo_data <- calculate_elo(all_games)
 games_with_elo <- merge(all_games, elo_data, by = c("game_id", "home_team", "away_team"))
 
-# Calculate rolling statistics
-cat("  Calculating rolling team statistics...\n")
+# Merge per-game EPA data into games_with_elo for rolling calculation
+games_with_elo <- games_with_elo %>%
+  left_join(team_epa_by_game %>%
+              select(game_id, team = posteam, off_epa_game = off_epa_per_play,
+                     success_rate_game = off_success_rate, explosive_rate_game = off_explosive_rate,
+                     pace_game = pace),
+            by = c("game_id", "home_team" = "team")) %>%
+  rename(home_off_epa_game = off_epa_game, home_success_rate_game = success_rate_game,
+         home_explosive_rate_game = explosive_rate_game, home_pace_game = pace_game) %>%
+  left_join(team_epa_by_game %>%
+              select(game_id, team = posteam, off_epa_game = off_epa_per_play,
+                     success_rate_game = off_success_rate, explosive_rate_game = off_explosive_rate,
+                     pace_game = pace),
+            by = c("game_id", "away_team" = "team")) %>%
+  rename(away_off_epa_game = off_epa_game, away_success_rate_game = success_rate_game,
+         away_explosive_rate_game = explosive_rate_game, away_pace_game = pace_game) %>%
+  left_join(team_def_by_game %>%
+              select(game_id, team = defteam, def_epa_game = def_epa_per_play),
+            by = c("game_id", "home_team" = "team")) %>%
+  rename(home_def_epa_game = def_epa_game) %>%
+  left_join(team_def_by_game %>%
+              select(game_id, team = defteam, def_epa_game = def_epa_per_play),
+            by = c("game_id", "away_team" = "team")) %>%
+  rename(away_def_epa_game = def_epa_game)
+
+# Calculate rolling statistics including EPA metrics
+cat("  Calculating rolling team statistics with EPA metrics...\n")
 
 calculate_team_stats <- function(games, team, n_games = 10) {
   team_games <- games[games$home_team == team | games$away_team == team, ]
   team_games <- team_games[order(team_games$gameday), ]
-  
+
   team_games$is_home <- team_games$home_team == team
   team_games$points_for <- ifelse(team_games$is_home, team_games$home_score, team_games$away_score)
   team_games$points_against <- ifelse(team_games$is_home, team_games$away_score, team_games$home_score)
-  team_games$win <- ifelse(team_games$is_home, 
-                           team_games$home_score > team_games$away_score, 
+  team_games$win <- ifelse(team_games$is_home,
+                           team_games$home_score > team_games$away_score,
                            team_games$away_score > team_games$home_score)
   team_games$current_elo <- ifelse(team_games$is_home, team_games$home_elo_post, team_games$away_elo_post)
-  
+
+  # Extract EPA metrics for this team (from either home or away perspective)
+  team_games$off_epa_game <- ifelse(team_games$is_home,
+                                     team_games$home_off_epa_game,
+                                     team_games$away_off_epa_game)
+  team_games$def_epa_game <- ifelse(team_games$is_home,
+                                     team_games$home_def_epa_game,
+                                     team_games$away_def_epa_game)
+  team_games$success_rate_game <- ifelse(team_games$is_home,
+                                          team_games$home_success_rate_game,
+                                          team_games$away_success_rate_game)
+  team_games$explosive_rate_game <- ifelse(team_games$is_home,
+                                            team_games$home_explosive_rate_game,
+                                            team_games$away_explosive_rate_game)
+  team_games$pace_game <- ifelse(team_games$is_home,
+                                  team_games$home_pace_game,
+                                  team_games$away_pace_game)
+
   # Calculate rolling averages (shift by 1 to avoid look-ahead bias)
-  team_games$avg_points_for <- rollmean(c(rep(NA, 1), head(team_games$points_for, -1)), 
+  team_games$avg_points_for <- rollmean(c(rep(NA, 1), head(team_games$points_for, -1)),
                                         k = n_games, fill = NA, align = "right")
-  team_games$avg_points_against <- rollmean(c(rep(NA, 1), head(team_games$points_against, -1)), 
+  team_games$avg_points_against <- rollmean(c(rep(NA, 1), head(team_games$points_against, -1)),
                                             k = n_games, fill = NA, align = "right")
-  team_games$win_pct <- rollmean(c(rep(NA, 1), head(as.numeric(team_games$win), -1)), 
+  team_games$win_pct <- rollmean(c(rep(NA, 1), head(as.numeric(team_games$win), -1)),
                                  k = n_games, fill = NA, align = "right")
-  
+
+  # Rolling EPA averages (shift by 1 to avoid look-ahead bias)
+  team_games$off_epa_avg <- rollmean(c(rep(NA, 1), head(team_games$off_epa_game, -1)),
+                                      k = n_games, fill = NA, align = "right")
+  team_games$def_epa_avg <- rollmean(c(rep(NA, 1), head(team_games$def_epa_game, -1)),
+                                      k = n_games, fill = NA, align = "right")
+  team_games$success_rate_avg <- rollmean(c(rep(NA, 1), head(team_games$success_rate_game, -1)),
+                                           k = n_games, fill = NA, align = "right")
+  team_games$explosive_rate_avg <- rollmean(c(rep(NA, 1), head(team_games$explosive_rate_game, -1)),
+                                             k = n_games, fill = NA, align = "right")
+  team_games$pace_avg <- rollmean(c(rep(NA, 1), head(team_games$pace_game, -1)),
+                                   k = n_games, fill = NA, align = "right")
+
   # Recent form (last 3 games weighted)
   team_games$recent_form <- rollapply(c(rep(NA, 1), head(as.numeric(team_games$win), -1)),
                                       width = 3, FUN = function(x) {
@@ -145,9 +200,9 @@ calculate_team_stats <- function(games, team, n_games = 10) {
                                         weighted.mean(x, c(1, 1.5, 2), na.rm = TRUE)
                                       },
                                       fill = NA, align = "right", partial = TRUE)
-  
+
   team_games$elo_rating <- c(NA, head(team_games$current_elo, -1))
-  
+
   return(team_games)
 }
 
@@ -160,49 +215,25 @@ team_stats_list <- lapply(all_teams, function(team) {
 })
 team_stats <- do.call(rbind, team_stats_list)
 
-# Merge EPA data separately by matching game_id and team
-# For home teams
-home_epa <- team_epa_by_game %>%
-  rename(home_team = posteam, home_off_epa = off_epa_per_play, 
-         home_success_rate = off_success_rate)
-
-home_def <- team_def_by_game %>%
-  rename(home_team = defteam, home_def_epa = def_epa_per_play)
-
-# For away teams
-away_epa <- team_epa_by_game %>%
-  rename(away_team = posteam, away_off_epa = off_epa_per_play,
-         away_success_rate = off_success_rate)
-
-away_def <- team_def_by_game %>%
-  rename(away_team = defteam, away_def_epa = def_epa_per_play)
-
-# Create final feature dataset
-home_stats <- team_stats[team_stats$is_home == TRUE, 
-                         c("game_id", "avg_points_for", "avg_points_against", "win_pct", 
-                           "elo_rating", "recent_form")]
-names(home_stats) <- c("game_id", "home_avg_pts", "home_avg_pts_allowed", "home_win_pct", 
-                       "home_elo", "home_recent_form")
+# Create final feature dataset with rolling EPA averages (no per-game EPA merge needed)
+home_stats <- team_stats[team_stats$is_home == TRUE,
+                         c("game_id", "avg_points_for", "avg_points_against", "win_pct",
+                           "elo_rating", "recent_form", "off_epa_avg", "def_epa_avg",
+                           "success_rate_avg", "explosive_rate_avg", "pace_avg")]
+names(home_stats) <- c("game_id", "home_avg_pts", "home_avg_pts_allowed", "home_win_pct",
+                       "home_elo", "home_recent_form", "home_off_epa", "home_def_epa",
+                       "home_success_rate", "home_explosive_rate", "home_pace")
 
 away_stats <- team_stats[team_stats$is_home == FALSE,
-                         c("game_id", "avg_points_for", "avg_points_against", "win_pct", 
-                           "elo_rating", "recent_form")]
-names(away_stats) <- c("game_id", "away_avg_pts", "away_avg_pts_allowed", "away_win_pct", 
-                       "away_elo", "away_recent_form")
+                         c("game_id", "avg_points_for", "avg_points_against", "win_pct",
+                           "elo_rating", "recent_form", "off_epa_avg", "def_epa_avg",
+                           "success_rate_avg", "explosive_rate_avg", "pace_avg")]
+names(away_stats) <- c("game_id", "away_avg_pts", "away_avg_pts_allowed", "away_win_pct",
+                       "away_elo", "away_recent_form", "away_off_epa", "away_def_epa",
+                       "away_success_rate", "away_explosive_rate", "away_pace")
 
 features_data <- merge(games_with_elo, home_stats, by = "game_id", all.x = TRUE)
 features_data <- merge(features_data, away_stats, by = "game_id", all.x = TRUE)
-
-# Merge EPA data
-features_data <- features_data %>%
-  left_join(home_epa %>% select(game_id, home_team, home_off_epa, home_success_rate), 
-            by = c("game_id", "home_team")) %>%
-  left_join(home_def %>% select(game_id, home_team, home_def_epa), 
-            by = c("game_id", "home_team")) %>%
-  left_join(away_epa %>% select(game_id, away_team, away_off_epa, away_success_rate), 
-            by = c("game_id", "away_team")) %>%
-  left_join(away_def %>% select(game_id, away_team, away_def_epa), 
-            by = c("game_id", "away_team"))
 
 # Add derived features
 features_data$elo_diff <- features_data$home_elo_pre - features_data$away_elo_pre

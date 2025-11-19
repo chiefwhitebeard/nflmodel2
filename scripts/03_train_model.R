@@ -19,14 +19,16 @@ cat("Cleaning data...\n")
 cat(paste("  Initial rows:", nrow(features_data), "\n"))
 
 # Check for NAs in key predictors
-predictors <- c("elo_diff", "home_avg_pts", "away_avg_pts", 
+predictors <- c("elo_diff", "home_avg_pts", "away_avg_pts",
                 "home_avg_pts_allowed", "away_avg_pts_allowed",
-                "home_win_pct", "away_win_pct", 
+                "home_win_pct", "away_win_pct",
                 "home_rest", "away_rest", "rest_diff",
                 "home_recent_form", "away_recent_form",
                 "home_off_epa", "away_off_epa",
                 "home_def_epa", "away_def_epa",
                 "home_success_rate", "away_success_rate",
+                "home_explosive_rate", "away_explosive_rate",
+                "home_pace", "away_pace",
                 "is_divisional", "home_win")
 
 # Debug: Show which columns exist
@@ -66,14 +68,16 @@ cat(paste("Testing games:", nrow(test_data), "\n"))
 cat("\n1. Training enhanced game winner model...\n")
 
 winner_model <- glm(
-  home_win ~ elo_diff + 
-    home_avg_pts + away_avg_pts + 
+  home_win ~ elo_diff +
+    home_avg_pts + away_avg_pts +
     home_avg_pts_allowed + away_avg_pts_allowed +
-    home_win_pct + away_win_pct + 
+    home_win_pct + away_win_pct +
     home_rest + away_rest + rest_diff +
     home_recent_form + away_recent_form +
     home_off_epa + away_off_epa +
+    home_def_epa + away_def_epa +
     home_success_rate + away_success_rate +
+    home_explosive_rate + away_explosive_rate +
     is_divisional,
   data = train_data,
   family = binomial()
@@ -92,12 +96,14 @@ cat("\n2. Training enhanced point spread model...\n")
 train_data$point_diff <- train_data$home_score - train_data$away_score
 
 spread_model <- lm(
-  point_diff ~ elo_diff + 
+  point_diff ~ elo_diff +
     home_avg_pts + away_avg_pts +
     home_avg_pts_allowed + away_avg_pts_allowed +
     home_recent_form + away_recent_form +
     home_off_epa + away_off_epa +
+    home_def_epa + away_def_epa +
     home_success_rate + away_success_rate +
+    home_explosive_rate + away_explosive_rate +
     rest_diff +
     is_divisional,
   data = train_data
@@ -118,10 +124,13 @@ cat("\n3. Training enhanced total points model...\n")
 train_data$total_points <- train_data$home_score + train_data$away_score
 
 total_model <- lm(
-  total_points ~ home_avg_pts + away_avg_pts + 
+  total_points ~ home_avg_pts + away_avg_pts +
     home_avg_pts_allowed + away_avg_pts_allowed +
     home_off_epa + away_off_epa +
+    home_def_epa + away_def_epa +
     home_success_rate + away_success_rate +
+    home_explosive_rate + away_explosive_rate +
+    home_pace + away_pace +
     is_divisional,
   data = train_data
 )

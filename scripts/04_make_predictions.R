@@ -49,20 +49,38 @@ features_data <- readRDS("data/features_data.rds")
 cat("  Loading current season play-by-play for EPA averages...\n")
 current_pbp <- load_pbp(seasons = current_season)
 
-# Calculate season-average EPA for each team (not per-game)
+# Calculate season-average EPA and other metrics for each team (not per-game)
 season_epa <- current_pbp %>%
   filter(!is.na(posteam), !is.na(epa)) %>%
   group_by(posteam) %>%
   summarise(
     off_epa_season = mean(epa, na.rm = TRUE),
     success_rate_season = mean(success, na.rm = TRUE),
+    explosive_rate_season = mean(epa > 0.5, na.rm = TRUE),
     plays = n(),
     .groups = "drop"
   )
 
+# Calculate season defensive EPA
+season_def_epa <- current_pbp %>%
+  filter(!is.na(defteam), !is.na(epa)) %>%
+  group_by(defteam) %>%
+  summarise(
+    def_epa_season = mean(epa, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Calculate season pace (plays per game) for each team
+season_pace <- current_pbp %>%
+  filter(!is.na(posteam)) %>%
+  group_by(posteam, game_id) %>%
+  summarise(plays_in_game = n(), .groups = "drop") %>%
+  group_by(posteam) %>%
+  summarise(pace_season = mean(plays_in_game, na.rm = TRUE), .groups = "drop")
+
 # Get the most recent stats for each team from features_data
-get_team_latest_stats <- function(team, features_data, season_epa) {
-  
+get_team_latest_stats <- function(team, features_data, season_epa, season_def_epa, season_pace) {
+
   home_stats <- features_data %>%
     filter(home_team == team) %>%
     arrange(desc(gameday)) %>%
@@ -75,7 +93,7 @@ get_team_latest_stats <- function(team, features_data, season_epa) {
       recent_form = home_recent_form,
       gameday
     )
-  
+
   away_stats <- features_data %>%
     filter(away_team == team) %>%
     arrange(desc(gameday)) %>%
@@ -88,7 +106,7 @@ get_team_latest_stats <- function(team, features_data, season_epa) {
       recent_form = away_recent_form,
       gameday
     )
-  
+
   # Use whichever is more recent
   if (nrow(home_stats) == 0 && nrow(away_stats) == 0) {
     return(NULL)
@@ -101,18 +119,36 @@ get_team_latest_stats <- function(team, features_data, season_epa) {
   } else {
     stats <- away_stats
   }
-  
-  # Add season EPA from play-by-play
+
+  # Add season EPA and other metrics from play-by-play
   team_epa <- season_epa %>% filter(posteam == team)
   if (nrow(team_epa) > 0) {
     stats$off_epa <- team_epa$off_epa_season
     stats$success_rate <- team_epa$success_rate_season
+    stats$explosive_rate <- team_epa$explosive_rate_season
   } else {
     # Fallback to league average if no data
     stats$off_epa <- 0
     stats$success_rate <- 0.5
+    stats$explosive_rate <- 0.15
   }
-  
+
+  # Add defensive EPA
+  team_def_epa <- season_def_epa %>% filter(defteam == team)
+  if (nrow(team_def_epa) > 0) {
+    stats$def_epa <- team_def_epa$def_epa_season
+  } else {
+    stats$def_epa <- 0  # League average
+  }
+
+  # Add pace
+  team_pace <- season_pace %>% filter(posteam == team)
+  if (nrow(team_pace) > 0) {
+    stats$pace <- team_pace$pace_season
+  } else {
+    stats$pace <- 65  # NFL average
+  }
+
   return(stats)
 }
 
@@ -147,9 +183,9 @@ predictions_list <- list()
 
 for (i in 1:nrow(upcoming_games)) {
   game <- upcoming_games[i, ]
-  
-  home_stats <- get_team_latest_stats(game$home_team, features_data, season_epa)
-  away_stats <- get_team_latest_stats(game$away_team, features_data, season_epa)
+
+  home_stats <- get_team_latest_stats(game$home_team, features_data, season_epa, season_def_epa, season_pace)
+  away_stats <- get_team_latest_stats(game$away_team, features_data, season_epa, season_def_epa, season_pace)
   
   if (is.null(home_stats) || is.null(away_stats)) {
     cat(paste("  Skipping", game$away_team, "@", game$home_team, "- insufficient data\n"))
@@ -185,8 +221,14 @@ for (i in 1:nrow(upcoming_games)) {
     away_recent_form = away_stats$recent_form,
     home_off_epa = home_stats$off_epa,
     away_off_epa = away_stats$off_epa,
+    home_def_epa = home_stats$def_epa,
+    away_def_epa = away_stats$def_epa,
     home_success_rate = home_stats$success_rate,
     away_success_rate = away_stats$success_rate,
+    home_explosive_rate = home_stats$explosive_rate,
+    away_explosive_rate = away_stats$explosive_rate,
+    home_pace = home_stats$pace,
+    away_pace = away_stats$pace,
     is_divisional = is_divisional
   )
   
