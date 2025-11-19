@@ -35,9 +35,32 @@ jobs:
         run: |
           Rscript scripts/10_validate_predictions.R
       
+      - name: Check for errors
+        id: check_errors
+        run: |
+          if [ -f data/error_log.csv ]; then
+            ERROR_COUNT=$(tail -n +2 data/error_log.csv | wc -l)
+            if [ "$ERROR_COUNT" -gt 0 ]; then
+              echo "errors_found=true" >> $GITHUB_OUTPUT
+              echo "⚠️ Found $ERROR_COUNT errors in error log"
+            else
+              echo "errors_found=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "errors_found=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Commit validation results
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add data/validation/
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update validation results - $(date +'%Y-%m-%d')" && git push)
+          git add data/error_log.csv 2>/dev/null || true
+
+          if [ "${{ steps.check_errors.outputs.errors_found }}" == "true" ]; then
+            COMMIT_MSG="Update validation results - $(date +'%Y-%m-%d') ⚠️ With errors (check error_log.csv)"
+          else
+            COMMIT_MSG="Update validation results - $(date +'%Y-%m-%d')"
+          fi
+
+          git diff --quiet && git diff --staged --quiet || (git commit -m "$COMMIT_MSG" && git push)

@@ -3,6 +3,9 @@
 # v3 FIXES:
 # - Precipitation now correctly converted from mm to inches
 # - Win probability calculated from final spread (includes weather)
+# v4 FIXES:
+# - Added retry logic with exponential backoff for weather API
+# - Safe file writes with backup
 
 suppressPackageStartupMessages({
   library(httr)
@@ -10,6 +13,9 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(lubridate)
 })
+
+# Load error handling utilities
+source("scripts/00_error_handling.R")
 
 cat("Integrating weather data...\n")
 
@@ -114,9 +120,15 @@ for (i in 1:nrow(predictions)) {
     next
   }
   
-  # Get weather forecast
-  weather <- get_weather_forecast(home_loc$lat, home_loc$lon, game$game_date)
-  
+  # Get weather forecast with retry logic
+  weather <- safe_network_call(
+    func = function() get_weather_forecast(home_loc$lat, home_loc$lon, game$game_date),
+    max_retries = 3,
+    initial_delay = 2,
+    script_name = "07_integrate_weather.R",
+    operation = paste("Weather fetch for", game$home_team)
+  )
+
   if (is.null(weather)) {
     next
   }
@@ -219,12 +231,23 @@ final_predictions <- predictions %>%
 latest_file <- Sys.getenv("LATEST_FILE", "data/predictions/latest_predictions.csv")
 run_prefix <- Sys.getenv("RUN_PREFIX", "manual")
 
-write.csv(final_predictions, latest_file, row.names = FALSE)
+# Use safe write with backup
+safe_write_csv(
+  data = final_predictions,
+  file_path = latest_file,
+  script_name = "07_integrate_weather.R",
+  backup = TRUE
+)
 cat(paste("✓ Saved to", latest_file, "\n"))
 
 # Save dated copy to appropriate subfolder with run type prefix
 dated_file <- paste0("data/predictions/", run_prefix, "/predictions_", run_prefix, "_", Sys.Date(), ".csv")
-write.csv(final_predictions, dated_file, row.names = FALSE)
+safe_write_csv(
+  data = final_predictions,
+  file_path = dated_file,
+  script_name = "07_integrate_weather.R",
+  backup = TRUE
+)
 cat(paste("✓ Saved dated predictions:", dated_file, "\n"))
 
 # Show games with significant weather impact

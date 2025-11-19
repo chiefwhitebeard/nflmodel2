@@ -3,12 +3,18 @@
 # v3 FIXES:
 # - QB recency check now requires 50+ attempts in last 3 weeks (starter-level playing time)
 # - Prevents penalties for backup QBs with garbage time attempts
+# v4 FIXES:
+# - Added retry logic with exponential backoff for ESPN API
+# - Cached injury data to avoid duplicate API calls
 
 suppressPackageStartupMessages({
   library(httr)
   library(jsonlite)
   library(dplyr)
 })
+
+# Load error handling utilities
+source("scripts/00_error_handling.R")
 
 cat("Adjusting predictions for injuries...\n")
 
@@ -93,9 +99,15 @@ get_injury_data <- function() {
   })
 }
 
-# Load additional data
+# Load additional data with retry logic
 cat("  Fetching injury reports from ESPN...\n")
-injuries <- get_injury_data()
+injuries <- safe_network_call(
+  func = get_injury_data,
+  max_retries = 3,
+  initial_delay = 2,
+  script_name = "06_adjust_injuries_opponent_context.R",
+  operation = "ESPN injury data fetch"
+)
 
 # Supplement ESPN with nflreadr roster data for IR QBs (ESPN often omits long-term IR)
 # Use explicit season for 2025 NFL season
@@ -422,9 +434,10 @@ if (is.null(injuries)) {
 }
 
 # Export detailed injury report for manual verification (includes ALL injuries including IR)
+# Re-use cached injury data instead of calling API again
 if (!is.null(injuries)) {
-  all_injuries_for_export <- get_injury_data()
-  
+  all_injuries_for_export <- injuries
+
   # Add IR QBs from nflreadr to the export
   rosters_for_export <- load_rosters(seasons = 2025)
   ir_qbs_for_export <- rosters_for_export %>%
@@ -484,7 +497,14 @@ final_predictions <- base_predictions %>%
 
 # Save to appropriate file based on run type (configured in run_weekly_predictions.R)
 latest_file <- Sys.getenv("LATEST_FILE", "data/predictions/latest_predictions.csv")
-write.csv(final_predictions, latest_file, row.names = FALSE)
+
+# Use safe write with backup
+safe_write_csv(
+  data = final_predictions,
+  file_path = latest_file,
+  script_name = "06_adjust_injuries_opponent_context.R",
+  backup = TRUE
+)
 cat(paste("✓ Updated", latest_file, "with injury adjustments\n"))
 
 significant_injuries <- final_predictions[abs(final_predictions$injury_impact) >= 3, ]

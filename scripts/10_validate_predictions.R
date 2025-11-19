@@ -1,11 +1,18 @@
 # NFL Predictions Model - Validation Script
 # Validates archived predictions against actual results
+# v2 IMPROVEMENTS:
+# - Added retry logic for schedule data fetch
+# - Safe file operations with backup
+# - Validation of prediction file structure
 
 suppressPackageStartupMessages({
   library(nflreadr)
   library(dplyr)
   library(lubridate)
 })
+
+# Load error handling utilities
+source("scripts/00_error_handling.R")
 
 cat("Validating predictions against actual results...\n")
 
@@ -26,13 +33,25 @@ if (length(prediction_files) == 0) {
   quit(save = "no", status = 0)
 }
 
-# Load actual results for current season
+# Load actual results for current season with retry logic
 current_season <- year(Sys.Date())
 if (month(Sys.Date()) < 3) {
   current_season <- current_season - 1
 }
 
-schedule <- load_schedules(seasons = current_season)
+schedule <- safe_network_call(
+  func = function() load_schedules(seasons = current_season),
+  max_retries = 3,
+  initial_delay = 2,
+  script_name = "10_validate_predictions.R",
+  operation = "Schedule data fetch"
+)
+
+if (is.null(schedule)) {
+  cat("✗ Failed to load schedule data after 3 attempts. Cannot validate.\n")
+  quit(save = "no", status = 1)
+}
+
 schedule$gameday <- as.Date(schedule$gameday)
 
 # Sort prediction files from newest to oldest and find first with all games complete
@@ -44,8 +63,29 @@ predictions <- NULL
 for (pred_file in prediction_files_sorted) {
   cat(paste("Checking:", basename(pred_file), "... "))
 
-  temp_predictions <- read.csv(pred_file, stringsAsFactors = FALSE)
-  temp_predictions$game_date <- as.Date(temp_predictions$game_date)
+  # Safe read with error handling
+  temp_predictions <- tryCatch({
+    data <- read.csv(pred_file, stringsAsFactors = FALSE)
+
+    # Validate basic structure
+    if (!"game_date" %in% names(data)) {
+      cat("Missing game_date column, skipping\n")
+      next
+    }
+
+    data$game_date <- as.Date(data$game_date)
+    data
+  }, error = function(e) {
+    cat(paste("Error reading file:", e$message, ", skipping\n"))
+    log_error("10_validate_predictions.R", "FILE_READ_ERROR",
+              paste("Failed to read", pred_file, ":", e$message),
+              Sys.getenv("RUN_TYPE", "unknown"))
+    NULL
+  })
+
+  if (is.null(temp_predictions)) {
+    next
+  }
 
   # Match to actual results
   temp_results <- temp_predictions %>%
@@ -148,10 +188,16 @@ if ("base_spread" %in% names(results) && "spread_after_injuries" %in% names(resu
             ifelse(final_mae < injury_mae, "✓ improved", "⚠ worse"), ")\n"))
 }
 
-# Save detailed results to details subfolder
+# Save detailed results to details subfolder with safe write
 validation_date <- Sys.Date()
 detail_file <- paste0("data/validation/details/validation_detail_", validation_date, ".csv")
-write.csv(results, detail_file, row.names = FALSE)
+
+safe_write_csv(
+  data = results,
+  file_path = detail_file,
+  script_name = "10_validate_predictions.R",
+  backup = TRUE
+)
 cat(paste("\n✓ Detailed results saved to", detail_file, "\n"))
 
 # Append to accuracy log
@@ -170,14 +216,32 @@ log_entry <- data.frame(
 )
 
 log_file <- "data/validation/accuracy_log.csv"
+
+# Safe read and write for accuracy log
 if (file.exists(log_file)) {
-  log_data <- read.csv(log_file, stringsAsFactors = FALSE)
-  log_data <- rbind(log_data, log_entry)
+  log_data <- tryCatch({
+    read.csv(log_file, stringsAsFactors = FALSE)
+  }, error = function(e) {
+    cat(paste("⚠️  Warning: Could not read accuracy log:", e$message, "\n"))
+    cat("  Creating new log file\n")
+    NULL
+  })
+
+  if (!is.null(log_data)) {
+    log_data <- rbind(log_data, log_entry)
+  } else {
+    log_data <- log_entry
+  }
 } else {
   log_data <- log_entry
 }
 
-write.csv(log_data, log_file, row.names = FALSE)
+safe_write_csv(
+  data = log_data,
+  file_path = log_file,
+  script_name = "10_validate_predictions.R",
+  backup = TRUE
+)
 cat(paste("✓ Updated accuracy log:", log_file, "\n"))
 
 # Cover rate analysis by spread bucket
@@ -215,9 +279,15 @@ if (nrow(cover_by_spread) > 0) {
                 row$spread_bucket, row$games, row$cover_rate))
   }
 
-  # Save for dashboard to details subfolder
+  # Save for dashboard to details subfolder with safe write
   cover_file <- paste0("data/validation/details/cover_by_spread_", validation_date, ".csv")
-  write.csv(cover_by_spread, cover_file, row.names = FALSE)
+
+  safe_write_csv(
+    data = cover_by_spread,
+    file_path = cover_file,
+    script_name = "10_validate_predictions.R",
+    backup = TRUE
+  )
   cat(paste("✓ Saved cover analysis:", cover_file, "\n"))
 }
 
