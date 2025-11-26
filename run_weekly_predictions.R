@@ -35,7 +35,7 @@ if (run_type != "tracking" && file.exists(latest_file)) {
   if (nrow(prev_preds) > 0) {
     archive_date <- unique(prev_preds$prediction_date)[1]
     archive_subdir <- paste0("data/predictions/", run_prefix, "/")
-    archive_file <- paste0(archive_subdir, "predictions_", archive_date, ".csv")
+    archive_file <- paste0(archive_subdir, "predictions_", run_prefix, "_", archive_date, ".csv")
 
     # Create subdirectory if it doesn't exist
     if (!dir.exists(archive_subdir)) {
@@ -168,9 +168,9 @@ if (!dir.exists(subdir)) {
 }
 
 # Load the final predictions from weather script
-predictions <- read.csv("data/predictions/latest_predictions.csv", stringsAsFactors = FALSE)
+predictions <- read.csv(latest_file, stringsAsFactors = FALSE)
 write.csv(predictions, dated_file, row.names = FALSE)
 
 cat("\nYour predictions are saved in:\n")
-cat("  data/predictions/latest_predictions.csv\n")
+cat(paste(" ", latest_file, "\n"))
 cat(paste(" ", dated_file, "\n"))
