@@ -34,7 +34,13 @@ if (run_type != "tracking" && file.exists(latest_file)) {
   prev_preds <- read.csv(latest_file, stringsAsFactors = FALSE)
   if (nrow(prev_preds) > 0) {
     archive_date <- unique(prev_preds$prediction_date)[1]
-    archive_file <- paste0("data/predictions/predictions_", archive_date, ".csv")
+    archive_subdir <- paste0("data/predictions/", run_prefix, "/")
+    archive_file <- paste0(archive_subdir, "predictions_", archive_date, ".csv")
+
+    # Create subdirectory if it doesn't exist
+    if (!dir.exists(archive_subdir)) {
+      dir.create(archive_subdir, recursive = TRUE)
+    }
 
     if (!file.exists(archive_file)) {
       write.csv(prev_preds, archive_file, row.names = FALSE)
@@ -144,13 +150,21 @@ cat("========================================\n")
 cat(paste("✓ PIPELINE COMPLETE in", elapsed, "minutes\n"))
 cat("========================================\n")
 
-# Save with appropriate naming
+# Save with appropriate naming in subdirectories
 if (run_type == "primary") {
-  dated_file <- paste0("data/predictions/predictions_primary_", Sys.Date(), ".csv")
+  subdir <- "data/predictions/primary/"
+  dated_file <- paste0(subdir, "predictions_primary_", Sys.Date(), ".csv")
 } else if (run_type == "tracking") {
-  dated_file <- paste0("data/predictions/predictions_tracking_", Sys.Date(), ".csv")
+  subdir <- "data/predictions/tracking/"
+  dated_file <- paste0(subdir, "predictions_tracking_", Sys.Date(), ".csv")
 } else {
-  dated_file <- paste0("data/predictions/predictions_manual_", Sys.Date(), ".csv")
+  subdir <- "data/predictions/manual/"
+  dated_file <- paste0(subdir, "predictions_manual_", Sys.Date(), ".csv")
+}
+
+# Create subdirectory if it doesn't exist
+if (!dir.exists(subdir)) {
+  dir.create(subdir, recursive = TRUE)
 }
 
 # Load the final predictions from weather script
