@@ -20,9 +20,9 @@ For the current week's games:
 ## 🤖 Automation
 
 Runs automatically via GitHub Actions:
-- **Tuesday at 6 AM ET** (primary prediction run)
+- **Wednesday at 6 AM ET** (primary prediction run)
 
-Manual trigger available from GitHub Actions tab.
+Manual trigger available from GitHub Actions tab with run type options (primary/tracking/manual).
 
 **Continuous Testing:**
 - Tests run automatically on every push to main
@@ -40,14 +40,14 @@ nflmodel2/
 │   ├── 03_train_model.R                     # Train models
 │   ├── 04_make_predictions.R                # Base predictions
 │   ├── 05_calculate_defensive_ratings.R     # Defensive EPA by position
+│   ├── 08_backup_qb_performance.R           # QB performance DB (runs before 06)
 │   ├── 06_adjust_injuries_opponent_context.R # Injury adjustments
 │   ├── 07_integrate_weather.R               # Weather forecasts
-│   ├── 08_backup_qb_performance.R           # QB performance DB
 │   ├── 10_validate_predictions.R            # Post-game validation
 │   └── 11_accuracy_dashboard.R              # Performance tracking
 ├── data/
 │   ├── predictions/
-│   │   ├── latest_predictions.csv           # Current predictions (21 columns)
+│   │   ├── latest_predictions.csv           # Current predictions (17 columns)
 │   │   └── predictions_YYYY-MM-DD.csv       # Dated archives
 │   ├── validation/
 │   │   ├── validation_detail_YYYY-MM-DD.csv # Detailed validation results
@@ -74,7 +74,9 @@ nflmodel2/
 **1. Base Model**
 - Logistic regression (winner prediction)
 - Linear regression (spread/total)
-- Elo ratings + rolling 15-game averages
+- Elo ratings (initial=1500, k=20) + rolling 10-game averages + 3-game weighted recent form
+- EPA metrics from play-by-play data
+- Rest differentials and divisional game flags
 
 **2. Opponent-Adjusted Injuries**
 - Defensive EPA by position (pass/rush)
@@ -95,12 +97,14 @@ nflmodel2/
 
 ### Output Files
 
-**latest_predictions.csv (21 columns):**
+**latest_predictions.csv (17 columns):**
 - **Core Info**: game_date, away_team, home_team, predicted_winner
-- **Final Predictions**: final_spread, final_home_win_probability, predicted_total
-- **Adjustment Breakdown**: base_spread, spread_after_injuries, injury_impact (home/away)
-- **Weather Data**: temp, wind_speed, precipitation, weather_impact
-- **Details**: home_injuries, away_injuries, prediction_date
+- **Predictions**: predicted_spread, predicted_total, home_win_probability
+- **Adjusted Values**: predicted_spread_injury_adjusted, predicted_spread_weather_adjusted, adjusted_spread (final)
+- **Probabilities**: cover_probability variants (base, injury-adjusted, weather-adjusted, final)
+- **Impact Metrics**: injury_impact, weather_impact
+- **Weather Data**: temp, wind_speed, precipitation
+- **Metadata**: prediction_date
 
 **injury_report.csv:**
 - All teams' injuries (OUT/DOUBTFUL/QUESTIONABLE)

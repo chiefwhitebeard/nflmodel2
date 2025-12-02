@@ -21,8 +21,8 @@ Runtime: ~25-45 seconds
 
 ### Automated Runs
 GitHub Actions runs automatically:
-- Tuesday 6 AM ET (primary run)
-- Can be manually triggered from Actions tab
+- Wednesday 6 AM ET (primary run)
+- Can be manually triggered from Actions tab with run type options (primary/tracking/manual)
 
 Local sync after automated run:
 ```bash
