@@ -2,8 +2,8 @@ name: Generate NFL Predictions
 
 on:
   schedule:
-    # Wednesday at 6 AM ET (10 AM UTC) - PRIMARY RUN
-    - cron: '0 10 * * 3'
+    # Wednesday at 6 PM ET (23:00 UTC) - PRIMARY RUN
+    - cron: '0 23 * * 3'
   workflow_dispatch:
     inputs:
       run_type:
